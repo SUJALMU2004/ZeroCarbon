@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import type { JSX } from "react";
@@ -12,9 +13,9 @@ type ActionLink = {
 };
 
 const navLinks: NavLink[] = [
-  { label: "How to Offset Emissions", href: "/#how-to-offset-emissions" },
-  { label: "How It Works", href: "/#how-it-works" },
-  { label: "Projects", href: "/#projects" },
+  { label: "How To Offset Emissions", href: "/how-to-offset-emissions" },
+  { label: "How It Works", href: "/how-it-works" },
+  { label: "Projects", href: "/projects" },
 ];
 
 const actionLinks: ActionLink[] = [
@@ -53,14 +54,14 @@ export function ZeroCarbonNavbar(): JSX.Element {
     <header className="fixed inset-x-0 top-0 z-50 px-3 pt-4 sm:px-4 lg:px-6">
       <nav
         aria-label="Primary"
-        className="mx-auto w-full max-w-7xl rounded-2xl border border-white/20 bg-[rgba(255,255,255,0.1)] shadow-[0_12px_36px_rgba(15,23,42,0.15)] backdrop-blur-[12px]"
+        className="mx-auto w-full max-w-7xl rounded-2xl border border-white/20 bg-[rgba(255,255,255,0.1)] shadow-[0_12px_36px_rgba(15,23,42,0.15)] backdrop-blur-md"
       >
         <div className="flex items-center justify-between gap-3 px-4 py-3 sm:px-5 lg:px-6">
           <Link
             href="/"
             className="rounded-md text-lg font-extrabold tracking-tight text-slate-900 transition-colors duration-200 hover:text-emerald-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400 focus-visible:ring-offset-2"
           >
-            ZeroCarbon
+            <Image src="/ZeroCarbon.png" alt="ZeroCarbon Logo" width={148} height={148} />
           </Link>
 
           <div className="hidden items-center gap-5 lg:flex xl:gap-8">
@@ -145,7 +146,7 @@ export function ZeroCarbonNavbar(): JSX.Element {
                   key={action.href}
                   href={action.href}
                   onClick={() => setIsMenuOpen(false)}
-                  className={`whitespace-normal break-words rounded-full px-4 py-2 text-center text-sm font-semibold transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400 focus-visible:ring-offset-2 ${actionClass(action.variant)}`}
+                  className={`whitespace-normal wrap-break-word rounded-full px-4 py-2 text-center text-sm font-semibold transition-all duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400 focus-visible:ring-offset-2 ${actionClass(action.variant)}`}
                 >
                   {action.label}
                 </Link>

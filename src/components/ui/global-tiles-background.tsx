@@ -8,7 +8,7 @@ export function GlobalTilesBackground() {
       <div className="absolute inset-0 bg-[radial-gradient(circle_at_20%_5%,rgba(16,185,129,0.06),transparent_38%),radial-gradient(circle_at_95%_25%,rgba(59,130,246,0.05),transparent_42%)]" />
 
       {/* Bottom fade into page background to avoid harsh cutoff */}
-      <div className="absolute inset-x-0 bottom-0 h-64 bg-gradient-to-b from-transparent via-white/78 to-white" />
+      <div className="absolute inset-x-0 bottom-0 h-64 bg-linear-to-b from-transparent via-white/78 to-white" />
     </div>
   );
 }

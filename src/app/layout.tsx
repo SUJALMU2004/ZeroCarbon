@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import { ZeroCarbonFooter } from "@/components/ui/zerocarbon-footer";
 import { ZeroCarbonNavbar } from "@/components/ui/zerocarbon-navbar";
 import { GlobalTilesBackground } from "@/components/ui/global-tiles-background";
 
@@ -22,6 +23,7 @@ export default function RootLayout({
         <GlobalTilesBackground />
         <ZeroCarbonNavbar />
         <div className="relative z-10 min-h-screen pt-24 md:pt-28">{children}</div>
+        <ZeroCarbonFooter />
       </body>
     </html>
   );

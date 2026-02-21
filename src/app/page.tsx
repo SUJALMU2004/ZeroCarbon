@@ -1,3 +1,5 @@
+import Link from "next/link";
+
 export default function Page() {
   return (
     <main className="mx-auto flex w-full max-w-6xl flex-col gap-6 px-4 pb-14 sm:px-6 md:gap-8 md:px-8 md:pb-20 lg:pb-24">
@@ -12,37 +14,47 @@ export default function Page() {
         </p>
       </section>
 
-      <section
-        id="how-to-offset-emissions"
-        className="scroll-mt-28 rounded-3xl border border-slate-200 bg-white/75 p-6 shadow-sm backdrop-blur-sm sm:p-8 md:scroll-mt-32 md:p-10"
-      >
-        <h2 className="text-xl font-semibold tracking-tight text-slate-900 sm:text-2xl">How to Offset Emissions</h2>
-        <p className="mt-3 max-w-3xl text-slate-600">
-          Calculate your footprint, choose certified projects, and purchase offsets with transparent
-          verification records and retirement tracking.
-        </p>
-      </section>
+      <section className="grid gap-4 md:grid-cols-3 md:gap-5">
+        <article className="rounded-3xl border border-slate-200 bg-white/75 p-6 shadow-sm backdrop-blur-sm sm:p-8">
+          <h2 className="text-xl font-semibold tracking-tight text-slate-900">How To Offset Emissions</h2>
+          <p className="mt-3 text-slate-600">
+            Learn how to measure your footprint, choose trusted projects, and retire credits with
+            transparent records.
+          </p>
+          <Link
+            href="/how-to-offset-emissions"
+            className="mt-4 inline-flex text-sm font-semibold text-emerald-600 transition-colors duration-200 hover:text-emerald-700"
+          >
+            Learn more
+          </Link>
+        </article>
 
-      <section
-        id="how-it-works"
-        className="scroll-mt-28 rounded-3xl border border-slate-200 bg-white/75 p-6 shadow-sm backdrop-blur-sm sm:p-8 md:scroll-mt-32 md:p-10"
-      >
-        <h2 className="text-xl font-semibold tracking-tight text-slate-900 sm:text-2xl">How It Works</h2>
-        <p className="mt-3 max-w-3xl text-slate-600">
-          ZeroCarbon matches buyers with high-integrity projects, verifies issuance data, and
-          provides a clean dashboard for tracking impact milestones.
-        </p>
-      </section>
+        <article className="rounded-3xl border border-slate-200 bg-white/75 p-6 shadow-sm backdrop-blur-sm sm:p-8">
+          <h2 className="text-xl font-semibold tracking-tight text-slate-900">How It Works</h2>
+          <p className="mt-3 text-slate-600">
+            See how ZeroCarbon verifies projects, simplifies purchasing, and tracks measurable climate
+            impact.
+          </p>
+          <Link
+            href="/how-it-works"
+            className="mt-4 inline-flex text-sm font-semibold text-emerald-600 transition-colors duration-200 hover:text-emerald-700"
+          >
+            Learn more
+          </Link>
+        </article>
 
-      <section
-        id="projects"
-        className="scroll-mt-28 rounded-3xl border border-slate-200 bg-white/75 p-6 shadow-sm backdrop-blur-sm sm:p-8 md:scroll-mt-32 md:p-10"
-      >
-        <h2 className="text-xl font-semibold tracking-tight text-slate-900 sm:text-2xl">Projects</h2>
-        <p className="mt-3 max-w-3xl text-slate-600">
-          Explore reforestation, blue-carbon, and carbon-removal initiatives with region, methodology,
-          and validation details that are easy to compare.
-        </p>
+        <article className="rounded-3xl border border-slate-200 bg-white/75 p-6 shadow-sm backdrop-blur-sm sm:p-8">
+          <h2 className="text-xl font-semibold tracking-tight text-slate-900">Projects</h2>
+          <p className="mt-3 text-slate-600">
+            Explore climate initiatives across categories, with clear standards and comparability.
+          </p>
+          <Link
+            href="/projects"
+            className="mt-4 inline-flex text-sm font-semibold text-emerald-600 transition-colors duration-200 hover:text-emerald-700"
+          >
+            Learn more
+          </Link>
+        </article>
       </section>
     </main>
   );
