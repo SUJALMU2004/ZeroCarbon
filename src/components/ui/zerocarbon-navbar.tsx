@@ -20,7 +20,7 @@ const navLinks: NavLink[] = [
 
 const actionLinks: ActionLink[] = [
   { label: "Register Company", href: "/register-company", variant: "secondary" },
-  { label: "Login", href: "/login", variant: "ghost" },
+  { label: "Register / Login", href: "/login", variant: "ghost" },
 ];
 
 function actionClass(variant: ActionLink["variant"]): string {
