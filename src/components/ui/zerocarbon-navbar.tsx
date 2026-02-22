@@ -19,7 +19,6 @@ const navLinks: NavLink[] = [
 ];
 
 const actionLinks: ActionLink[] = [
-  { label: "List Your Project", href: "/list-project", variant: "primary" },
   { label: "Register Company", href: "/register-company", variant: "secondary" },
   { label: "Login", href: "/login", variant: "ghost" },
 ];
