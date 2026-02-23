@@ -2,78 +2,71 @@
 
 import { useState, type FormEvent } from "react";
 import Link from "next/link";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useSearchParams } from "next/navigation";
 import type { AuthError } from "@supabase/supabase-js";
 import { createBrowserSupabaseClient } from "@/lib/supabase/client";
 
-function getFriendlyErrorMessage(error: AuthError): string {
+const GENERIC_RESET_MESSAGE = "If an account exists for this email, a reset link has been sent.";
+
+function isServiceIssue(error: AuthError): boolean {
   const message = error.message ?? "";
-  const status = error.status;
-
-  if (status === 401 || /invalid login credentials/i.test(message)) {
-    return "Invalid email or password.";
-  }
-
-  if (/email not confirmed/i.test(message)) {
-    return "Please confirm your email before logging in.";
-  }
-
-  if (/invalid api key|jwt|api key/i.test(message)) {
-    return "Authentication service configuration error. Please contact support.";
-  }
-
-  if (/failed to fetch|network/i.test(message)) {
-    return "Network error while connecting to authentication service. Please try again.";
-  }
-
-  return "Unable to sign in right now. Please try again.";
+  return (
+    /invalid api key|jwt|api key|project not found/i.test(message) ||
+    /failed to fetch|network request failed|network/i.test(message)
+  );
 }
 
-export function LoginForm() {
-  const router = useRouter();
+export function ForgotPasswordForm() {
   const searchParams = useSearchParams();
   const emailQuery = searchParams.get("email")?.trim() ?? "";
   const [email, setEmail] = useState(emailQuery);
-  const [password, setPassword] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError(null);
+    setSuccessMessage(null);
+
+    const normalizedEmail = email.trim();
+    if (!normalizedEmail) {
+      setError("Email is required.");
+      return;
+    }
+
     setIsLoading(true);
 
     try {
       const supabase = createBrowserSupabaseClient();
-      const { error: signInError } = await supabase.auth.signInWithPassword({
-        email: email.trim(),
-        password,
+      const redirectTo = `${window.location.origin}/reset-password`;
+      const { error: resetError } = await supabase.auth.resetPasswordForEmail(normalizedEmail, {
+        redirectTo,
       });
 
-      if (signInError) {
-        setError(getFriendlyErrorMessage(signInError));
+      if (resetError) {
+        if (isServiceIssue(resetError)) {
+          setError("Unable to process your request right now. Please try again.");
+        } else {
+          // Keep response generic to avoid disclosing whether an account exists.
+          setSuccessMessage(GENERIC_RESET_MESSAGE);
+        }
         return;
       }
 
-      router.replace("/dashboard");
-      router.refresh();
+      setSuccessMessage(GENERIC_RESET_MESSAGE);
     } catch (caughtError) {
       if (caughtError instanceof Error && /missing required environment variable/i.test(caughtError.message)) {
         setError("Authentication service configuration error. Please contact support.");
       } else {
-        setError("Network error while connecting to authentication service. Please try again.");
+        setError("Unable to process your request right now. Please try again.");
       }
     } finally {
       setIsLoading(false);
     }
   }
 
-  const registerHref = email.trim()
-    ? `/register?email=${encodeURIComponent(email.trim())}`
-    : "/register";
-  const forgotPasswordHref = email.trim()
-    ? `/forgot-password?email=${encodeURIComponent(email.trim())}`
-    : "/forgot-password";
+  const loginHref = email.trim() ? `/login?email=${encodeURIComponent(email.trim())}` : "/login";
 
   return (
     <form className="mt-6 space-y-4" onSubmit={handleSubmit}>
@@ -95,38 +88,21 @@ export function LoginForm() {
         />
       </div>
 
-      <div>
-        <div className="mb-2 flex items-center justify-between gap-3">
-          <label htmlFor="password" className="block text-sm font-medium text-slate-700">
-            Password
-          </label>
-          <Link
-            href={forgotPasswordHref}
-            className="text-xs font-semibold text-emerald-700 transition-colors duration-200 hover:text-emerald-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400 focus-visible:ring-offset-2"
-          >
-            Forgot password?
-          </Link>
-        </div>
-        <input
-          id="password"
-          name="password"
-          type="password"
-          autoComplete="current-password"
-          required
-          disabled={isLoading}
-          value={password}
-          onChange={(event) => setPassword(event.target.value)}
-          className="w-full rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-slate-900 outline-none transition-colors duration-200 focus:border-emerald-400 focus:ring-2 focus:ring-emerald-200 disabled:cursor-not-allowed disabled:opacity-70"
-          placeholder="Enter your password"
-        />
-      </div>
-
       {error ? (
         <p
           aria-live="polite"
           className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700"
         >
           {error}
+        </p>
+      ) : null}
+
+      {successMessage ? (
+        <p
+          aria-live="polite"
+          className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800"
+        >
+          {successMessage}
         </p>
       ) : null}
 
@@ -141,20 +117,20 @@ export function LoginForm() {
               aria-hidden="true"
               className="h-4 w-4 animate-spin rounded-full border-2 border-white/80 border-t-transparent"
             />
-            Signing in...
+            Sending reset link...
           </span>
         ) : (
-          "Login"
+          "Send reset link"
         )}
       </button>
 
       <p className="text-sm text-slate-600">
-        Don&apos;t have an account?{" "}
+        Remembered your password?{" "}
         <Link
-          href={registerHref}
+          href={loginHref}
           className="font-semibold text-emerald-700 transition-colors duration-200 hover:text-emerald-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400 focus-visible:ring-offset-2"
         >
-          Register
+          Login
         </Link>
       </p>
     </form>
