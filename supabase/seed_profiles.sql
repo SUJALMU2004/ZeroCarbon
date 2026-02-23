@@ -17,7 +17,7 @@ alter table public.profiles
 alter table public.profiles enable row level security;
 
 insert into public.profiles (id, role)
-select u.id, 'company'
+select u.id, 'user'
 from auth.users u
 left join public.profiles p on p.id = u.id
 where p.id is null;

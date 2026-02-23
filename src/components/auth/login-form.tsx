@@ -1,7 +1,8 @@
 "use client";
 
 import { useState, type FormEvent } from "react";
-import { useRouter } from "next/navigation";
+import Link from "next/link";
+import { useRouter, useSearchParams } from "next/navigation";
 import type { AuthError } from "@supabase/supabase-js";
 import { createBrowserSupabaseClient } from "@/lib/supabase/client";
 
@@ -30,7 +31,9 @@ function getFriendlyErrorMessage(error: AuthError): string {
 
 export function LoginForm() {
   const router = useRouter();
-  const [email, setEmail] = useState("");
+  const searchParams = useSearchParams();
+  const emailQuery = searchParams.get("email")?.trim() ?? "";
+  const [email, setEmail] = useState(emailQuery);
   const [password, setPassword] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -49,7 +52,6 @@ export function LoginForm() {
 
       if (signInError) {
         setError(getFriendlyErrorMessage(signInError));
-        setIsLoading(false);
         return;
       }
 
@@ -61,9 +63,14 @@ export function LoginForm() {
       } else {
         setError("Network error while connecting to authentication service. Please try again.");
       }
+    } finally {
       setIsLoading(false);
     }
   }
+
+  const registerHref = email.trim()
+    ? `/register?email=${encodeURIComponent(email.trim())}`
+    : "/register";
 
   return (
     <form className="mt-6 space-y-4" onSubmit={handleSubmit}>
@@ -104,16 +111,41 @@ export function LoginForm() {
       </div>
 
       {error ? (
-        <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>
+        <p
+          aria-live="polite"
+          className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700"
+        >
+          {error}
+        </p>
       ) : null}
 
       <button
         type="submit"
         disabled={isLoading}
-        className="w-full rounded-xl border border-emerald-500 bg-gradient-to-r from-emerald-500 to-green-500 px-4 py-2.5 text-sm font-semibold text-white transition-all duration-200 hover:from-emerald-400 hover:to-green-400 disabled:cursor-not-allowed disabled:opacity-70"
+        className="inline-flex w-full items-center justify-center rounded-xl border border-emerald-500 bg-gradient-to-r from-emerald-500 to-green-500 px-4 py-2.5 text-sm font-semibold text-white transition-all duration-200 hover:from-emerald-400 hover:to-green-400 disabled:cursor-not-allowed disabled:opacity-70"
       >
-        {isLoading ? "Signing in..." : "Login"}
+        {isLoading ? (
+          <span className="inline-flex items-center gap-2">
+            <span
+              aria-hidden="true"
+              className="h-4 w-4 animate-spin rounded-full border-2 border-white/80 border-t-transparent"
+            />
+            Signing in...
+          </span>
+        ) : (
+          "Login"
+        )}
       </button>
+
+      <p className="text-sm text-slate-600">
+        Don&apos;t have an account?{" "}
+        <Link
+          href={registerHref}
+          className="font-semibold text-emerald-700 transition-colors duration-200 hover:text-emerald-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400 focus-visible:ring-offset-2"
+        >
+          Register
+        </Link>
+      </p>
     </form>
   );
 }

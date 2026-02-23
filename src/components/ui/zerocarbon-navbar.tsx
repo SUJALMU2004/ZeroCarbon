@@ -20,7 +20,7 @@ const navLinks: NavLink[] = [
 
 const actionLinks: ActionLink[] = [
   { label: "Register Company", href: "/register-company", variant: "secondary" },
-  { label: "Login", href: "/login", variant: "ghost" },
+  { label: "Register / Login", href: "/login", variant: "ghost" },
 ];
 
 function actionClass(variant: ActionLink["variant"]): string {
@@ -60,7 +60,7 @@ export function ZeroCarbonNavbar(): JSX.Element {
             href="/"
             className="rounded-md text-lg font-extrabold tracking-tight text-slate-900 transition-colors duration-200 hover:text-emerald-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400 focus-visible:ring-offset-2"
           >
-            <Image src="/ZeroCarbon.png" alt="ZeroCarbon Logo" width={148} height={148} />
+            <Image src="/ZeroCarbon.png" alt="ZeroCarbon Logo" width={150} height={34} />
           </Link>
 
           <div className="hidden items-center gap-5 lg:flex xl:gap-8">
