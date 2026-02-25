@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import type { AuthError } from "@supabase/supabase-js";
@@ -22,6 +22,10 @@ function getFriendlyResetErrorMessage(error: AuthError): string {
     return INVALID_LINK_MESSAGE;
   }
 
+  if (error.status === 429 || /too many requests|rate limit|throttl/i.test(message)) {
+    return "Too many password update attempts. Please wait a moment and try again.";
+  }
+
   if (/invalid api key|project not found|api key/i.test(message)) {
     return "Authentication service configuration error. Please contact support.";
   }
@@ -33,11 +37,28 @@ function getFriendlyResetErrorMessage(error: AuthError): string {
   return "Unable to reset password right now. Please try again.";
 }
 
+function clearRecoveryUrlState() {
+  const url = new URL(window.location.href);
+
+  url.hash = "";
+  url.searchParams.delete("token_hash");
+  url.searchParams.delete("type");
+  url.searchParams.delete("access_token");
+  url.searchParams.delete("refresh_token");
+  url.searchParams.delete("error");
+  url.searchParams.delete("error_code");
+  url.searchParams.delete("error_description");
+
+  window.history.replaceState({}, document.title, `${url.pathname}${url.search}`);
+}
+
 export function ResetPasswordForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const tokenHash = searchParams.get("token_hash");
   const tokenType = searchParams.get("type");
+  const inFlightRef = useRef(false);
+  const redirectTimeoutRef = useRef<number | null>(null);
 
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
@@ -47,6 +68,14 @@ export function ResetPasswordForm() {
   const [successMessage, setSuccessMessage] = useState<string | null>(null);
 
   useEffect(() => {
+    return () => {
+      if (redirectTimeoutRef.current) {
+        window.clearTimeout(redirectTimeoutRef.current);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
     const supabase = createBrowserSupabaseClient();
     let isMounted = true;
 
@@ -54,9 +83,27 @@ export function ResetPasswordForm() {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((event) => {
       if (event === "PASSWORD_RECOVERY" && isMounted) {
+        clearRecoveryUrlState();
         setRecoveryState("ready");
+        setError(null);
       }
     });
+
+    const markRecoveryReady = () => {
+      if (!isMounted) return;
+
+      clearRecoveryUrlState();
+      setRecoveryState("ready");
+      setError(null);
+    };
+
+    const hasActiveRecoverySession = async () => {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession();
+
+      return Boolean(session);
+    };
 
     async function initializeRecoverySession() {
       try {
@@ -88,11 +135,7 @@ export function ResetPasswordForm() {
             return;
           }
 
-          window.history.replaceState({}, document.title, `${window.location.pathname}${window.location.search}`);
-
-          if (isMounted) {
-            setRecoveryState("ready");
-          }
+          markRecoveryReady();
           return;
         }
 
@@ -103,6 +146,11 @@ export function ResetPasswordForm() {
           });
 
           if (verifyError) {
+            if (await hasActiveRecoverySession()) {
+              markRecoveryReady();
+              return;
+            }
+
             if (isMounted) {
               setRecoveryState("invalid");
               setError(INVALID_LINK_MESSAGE);
@@ -110,19 +158,14 @@ export function ResetPasswordForm() {
             return;
           }
 
-          if (isMounted) {
-            setRecoveryState("ready");
-          }
+          markRecoveryReady();
           return;
         }
 
-        const {
-          data: { session },
-        } = await supabase.auth.getSession();
-
-        if (session) {
+        if (await hasActiveRecoverySession()) {
           if (isMounted) {
             setRecoveryState("ready");
+            setError(null);
           }
           return;
         }
@@ -149,6 +192,11 @@ export function ResetPasswordForm() {
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+
+    if (isLoading || inFlightRef.current) {
+      return;
+    }
+
     setError(null);
     setSuccessMessage(null);
 
@@ -167,6 +215,7 @@ export function ResetPasswordForm() {
       return;
     }
 
+    inFlightRef.current = true;
     setIsLoading(true);
 
     try {
@@ -185,7 +234,10 @@ export function ResetPasswordForm() {
       setConfirmPassword("");
 
       await supabase.auth.signOut();
-      window.setTimeout(() => {
+      if (redirectTimeoutRef.current) {
+        window.clearTimeout(redirectTimeoutRef.current);
+      }
+      redirectTimeoutRef.current = window.setTimeout(() => {
         router.replace("/login");
         router.refresh();
       }, 1200);
@@ -197,6 +249,7 @@ export function ResetPasswordForm() {
       }
     } finally {
       setIsLoading(false);
+      inFlightRef.current = false;
     }
   }
 
@@ -295,7 +348,7 @@ export function ResetPasswordForm() {
           <span className="inline-flex items-center gap-2">
             <span
               aria-hidden="true"
-              className="h-4 w-4 animate-spin rounded-full border-2 border-white/80 border-t-transparent"
+            className="h-4 w-4 animate-spin rounded-full border-2 border-white/80 border-t-transparent"
             />
             Updating password...
           </span>

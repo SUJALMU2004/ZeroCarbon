@@ -6,11 +6,55 @@ import { ZeroCarbonNavbar } from "@/components/ui/zerocarbon-navbar";
 import { GlobalTilesBackground } from "@/components/ui/global-tiles-background";
 
 export const metadata: Metadata = {
-  title: "ZeroCarbon",
+  metadataBase: new URL("https://zerocarbonworld.vercel.app"),
+  title: {
+    default: "ZeroCarbon | Verified Carbon Credit Marketplace for Climate Action",
+    template: "%s | ZeroCarbon",
+  },
   description:
-    "ZeroCarbon | Offset emissions, discover verified climate projects, and scale climate action",
-  keywords:
-    "carbon credits, climate tech, carbon offset, carbon marketplace, sustainability, emissions",
+    "ZeroCarbon is a trusted carbon credit marketplace where companies offset emissions and project owners list verified climate projects. Buy, sell, and retire carbon credits transparently.",
+  keywords: [
+    "carbon credit marketplace",
+    "buy carbon credits",
+    "sell carbon credits",
+    "verified carbon credits",
+    "carbon offset platform",
+    "climate tech startup",
+    "emissions offset marketplace",
+    "net zero solutions",
+    "sustainability platform",
+  ],
+  authors: [{ name: "ZeroCarbon Team" }],
+  creator: "ZeroCarbon",
+  publisher: "ZeroCarbon",
+  robots: {
+    index: true,
+    follow: true,
+  },
+  openGraph: {
+    title: "ZeroCarbon | Buy & Sell Verified Carbon Credits",
+    description:
+      "Offset emissions, discover verified climate projects, and scale climate impact with ZeroCarbon.",
+    url: "https://zerocarbonworld.vercel.app",
+    siteName: "ZeroCarbon",
+    type: "website",
+    images: [
+      {
+        url: "/og-image.png",
+        width: 1200,
+        height: 630,
+        alt: "ZeroCarbon Carbon Credit Marketplace",
+      },
+    ],
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "ZeroCarbon | Carbon Credit Marketplace",
+    description:
+      "A transparent platform to buy, sell, and retire verified carbon credits.",
+    images: ["/og-image.png"],
+  },
+  themeColor: "#0f172a",
   icons: {
     icon: [
       { url: "/favicon/favicon.ico" },

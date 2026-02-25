@@ -4,7 +4,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import type { JSX } from "react";
-import type { User } from "@supabase/supabase-js";
+import type { Session, User } from "@supabase/supabase-js";
 import { LogoutButton } from "@/components/auth/logout-button";
 import { createBrowserSupabaseClient } from "@/lib/supabase/client";
 
@@ -97,8 +97,9 @@ export function ZeroCarbonNavbar(): JSX.Element {
     const supabase = createBrowserSupabaseClient();
     let isMounted = true;
 
-    const updateAuthState = (user: User | null) => {
+    const updateAuthState = (session: Session | null) => {
       if (!isMounted) return;
+      const user = session?.user ?? null;
 
       if (!user) {
         setAuthStatus("unauthenticated");
@@ -115,10 +116,10 @@ export function ZeroCarbonNavbar(): JSX.Element {
 
     const syncAuthState = async () => {
       const {
-        data: { user },
-      } = await supabase.auth.getUser();
+        data: { session },
+      } = await supabase.auth.getSession();
 
-      updateAuthState(user);
+      updateAuthState(session);
     };
 
     void syncAuthState();
@@ -126,7 +127,7 @@ export function ZeroCarbonNavbar(): JSX.Element {
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((_event, session) => {
-      updateAuthState(session?.user ?? null);
+      updateAuthState(session);
     });
 
     return () => {
