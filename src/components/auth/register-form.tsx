@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type FormEvent } from "react";
+import { useRef, useState, type FormEvent } from "react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import type { AuthError } from "@supabase/supabase-js";
@@ -29,6 +29,10 @@ function getFriendlySignupErrorMessage(error: AuthError): string {
 
   if (/signup is disabled|signups not allowed/i.test(message)) {
     return "Registration is currently disabled. Please contact support.";
+  }
+
+  if (error.status === 429 || /too many requests|rate limit|throttl/i.test(message)) {
+    return "Too many signup attempts. Please wait a moment and try again.";
   }
 
   if (/invalid api key|jwt|api key|project not found/i.test(message)) {
@@ -78,6 +82,7 @@ export function RegisterForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const emailQuery = searchParams.get("email")?.trim() ?? "";
+  const inFlightRef = useRef(false);
   const [email, setEmail] = useState(emailQuery);
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
@@ -87,6 +92,11 @@ export function RegisterForm() {
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+
+    if (isLoading || inFlightRef.current) {
+      return;
+    }
+
     setError(null);
     setSuccessMessage(null);
 
@@ -106,6 +116,7 @@ export function RegisterForm() {
       return;
     }
 
+    inFlightRef.current = true;
     setIsLoading(true);
 
     try {
@@ -143,6 +154,7 @@ export function RegisterForm() {
       }
     } finally {
       setIsLoading(false);
+      inFlightRef.current = false;
     }
   }
 
@@ -231,7 +243,7 @@ export function RegisterForm() {
           <span className="inline-flex items-center gap-2">
             <span
               aria-hidden="true"
-              className="h-4 w-4 animate-spin rounded-full border-2 border-white/80 border-t-transparent"
+            className="h-4 w-4 animate-spin rounded-full border-2 border-white/80 border-t-transparent"
             />
             Creating account...
           </span>
