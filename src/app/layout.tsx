@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import { ZeroCarbonFooter } from "@/components/ui/zerocarbon-footer";
 import { ZeroCarbonNavbar } from "@/components/ui/zerocarbon-navbar";
@@ -53,7 +53,6 @@ export const metadata: Metadata = {
       "A transparent platform to buy, sell, and retire verified carbon credits.",
     images: ["/og-image.png"],
   },
-  themeColor: "#0f172a",
   icons: {
     icon: [
       { url: "/favicon/favicon.ico" },
@@ -64,6 +63,10 @@ export const metadata: Metadata = {
     apple: "/favicon/apple-touch-icon.png",
     other: [{ rel: "manifest", url: "/favicon/site.webmanifest" }],
   },
+};
+
+export const viewport: Viewport = {
+  themeColor: "#0f172a",
 };
 
 export default function RootLayout({
