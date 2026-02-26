@@ -36,63 +36,68 @@ export async function sendVerificationEmail({
   supabase: SupabaseClient;
   userId: string;
 }) {
-  const resendApiKey = process.env.RESEND_API_KEY;
-  if (!resendApiKey) {
-    throw new Error("Missing required server environment variable: RESEND_API_KEY");
-  }
+  let stage = "init";
 
-  const { data: profile, error: profileError } = await supabase
-    .from("profiles")
-    .select("full_name, email, created_at, verification_document_url, verification_document_type")
-    .eq("id", userId)
-    .maybeSingle();
+  try {
+    const resendApiKey = process.env.RESEND_API_KEY;
+    if (!resendApiKey) {
+      throw new Error("Missing required server environment variable: RESEND_API_KEY");
+    }
 
-  if (profileError) {
-    throw new Error(profileError.message);
-  }
+    stage = "load_profile";
+    const { data: profile, error: profileError } = await supabase
+      .from("profiles")
+      .select("full_name, email, created_at, verification_document_url, verification_document_type")
+      .eq("id", userId)
+      .maybeSingle();
 
-  if (!profile) {
-    throw new Error("Profile not found.");
-  }
+    if (profileError) {
+      throw new Error(profileError.message);
+    }
 
-  const documentPath = profile.verification_document_url;
-  if (!documentPath) {
-    throw new Error("Verification document path is missing.");
-  }
+    if (!profile) {
+      throw new Error("Profile not found.");
+    }
 
-  const { data: signedUrlData, error: signedUrlError } = await supabase.storage
-    .from("verification-documents")
-    .createSignedUrl(documentPath, SIGNED_URL_EXPIRY_SECONDS);
+    const documentPath = profile.verification_document_url;
+    if (!documentPath) {
+      throw new Error("Verification document path is missing.");
+    }
 
-  if (signedUrlError || !signedUrlData?.signedUrl) {
-    throw new Error(signedUrlError?.message ?? "Unable to create signed URL for document preview.");
-  }
+    stage = "create_signed_url";
+    const { data: signedUrlData, error: signedUrlError } = await supabase.storage
+      .from("verification-documents")
+      .createSignedUrl(documentPath, SIGNED_URL_EXPIRY_SECONDS);
 
-  const rawToken = randomBytes(32).toString("base64url");
-  const tokenHash = createHash("sha256").update(rawToken).digest("hex");
-  const expiresAt = new Date(Date.now() + TOKEN_EXPIRY_HOURS * 60 * 60 * 1000).toISOString();
+    if (signedUrlError || !signedUrlData?.signedUrl) {
+      throw new Error(signedUrlError?.message ?? "Unable to create signed URL for document preview.");
+    }
 
-  const { error: tokenInsertError } = await supabase.from("verification_tokens").insert({
-    user_id: userId,
-    token: tokenHash,
-    expires_at: expiresAt,
-    used: false,
-  });
+    const rawToken = randomBytes(32).toString("base64url");
+    const tokenHash = createHash("sha256").update(rawToken).digest("hex");
+    const expiresAt = new Date(Date.now() + TOKEN_EXPIRY_HOURS * 60 * 60 * 1000).toISOString();
 
-  if (tokenInsertError) {
-    throw new Error(tokenInsertError.message);
-  }
+    stage = "rotate_token";
+    const { error: rotateTokenError } = await supabase.rpc("rotate_verification_token", {
+      p_user_id: userId,
+      p_token: tokenHash,
+      p_expires_at: expiresAt,
+    });
 
-  const approveUrl = buildActionUrl(rawToken, "approve");
-  const resubmitUrl = buildActionUrl(rawToken, "resubmit");
-  const rejectUrl = buildActionUrl(rawToken, "reject");
+    if (rotateTokenError) {
+      throw new Error(rotateTokenError.message);
+    }
 
-  const fullName = profile.full_name?.trim() || "Not provided";
-  const email = profile.email?.trim() || "Unavailable";
-  const createdAt = formatCreatedAt(profile.created_at);
-  const documentType = profile.verification_document_type?.trim() || "Not provided";
+    const approveUrl = buildActionUrl(rawToken, "approve");
+    const resubmitUrl = buildActionUrl(rawToken, "resubmit");
+    const rejectUrl = buildActionUrl(rawToken, "reject");
 
-  const html = `
+    const fullName = profile.full_name?.trim() || "Not provided";
+    const email = profile.email?.trim() || "Unavailable";
+    const createdAt = formatCreatedAt(profile.created_at);
+    const documentType = profile.verification_document_type?.trim() || "Not provided";
+
+    const html = `
   <div style="font-family:Arial,sans-serif;line-height:1.5;color:#0f172a">
     <h2 style="margin:0 0 12px">New User Verification Request</h2>
     <p style="margin:0 0 16px">A user submitted a verification document for review.</p>
@@ -118,22 +123,31 @@ export async function sendVerificationEmail({
     <p style="margin-top:16px;color:#475569;font-size:12px">Each link opens a confirmation step, expires in ${TOKEN_EXPIRY_HOURS} hours, and can only be used once.</p>
   </div>`;
 
-  const response = await fetch(RESEND_ENDPOINT, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${resendApiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      from: RESEND_FROM,
-      to: [ADMIN_EMAIL],
-      subject: "ZeroCarbon User Verification Request",
-      html,
-    }),
-  });
+    stage = "send_email";
+    const response = await fetch(RESEND_ENDPOINT, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${resendApiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        from: RESEND_FROM,
+        to: [ADMIN_EMAIL],
+        subject: "ZeroCarbon User Verification Request",
+        html,
+      }),
+    });
 
-  if (!response.ok) {
-    const failureBody = await response.text();
-    throw new Error(`Failed to send verification email. ${failureBody}`);
+    if (!response.ok) {
+      const failureBody = await response.text();
+      throw new Error(`Failed to send verification email. ${failureBody.slice(0, 400)}`);
+    }
+  } catch (error) {
+    console.error("verification_email_send_failed", {
+      userId,
+      stage,
+      reason: error instanceof Error ? error.message : "unknown_error",
+    });
+    throw error;
   }
 }

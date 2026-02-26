@@ -134,6 +134,49 @@ for insert
 to authenticated
 with check (user_id = auth.uid());
 
+-- Rotate verification tokens so old links are invalidated when user re-submits.
+create or replace function public.rotate_verification_token(
+  p_user_id uuid,
+  p_token text,
+  p_expires_at timestamptz
+)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if auth.uid() is null then
+    raise exception 'Unauthorized request.';
+  end if;
+
+  if p_user_id is null or auth.uid() <> p_user_id then
+    raise exception 'Forbidden request.';
+  end if;
+
+  if p_token is null or length(trim(p_token)) = 0 then
+    raise exception 'Token payload is invalid.';
+  end if;
+
+  if p_expires_at is null or p_expires_at <= now() then
+    raise exception 'Token expiry is invalid.';
+  end if;
+
+  update public.verification_tokens
+  set used = true,
+      used_at = now(),
+      action_taken = 'superseded'
+  where user_id = p_user_id
+    and used = false;
+
+  insert into public.verification_tokens (user_id, token, expires_at, used)
+  values (p_user_id, p_token, p_expires_at, false);
+end;
+$$;
+
+revoke all on function public.rotate_verification_token(uuid, text, timestamptz) from public;
+grant execute on function public.rotate_verification_token(uuid, text, timestamptz) to authenticated;
+
 -- Auto-create a profile row for each new auth user.
 create or replace function public.handle_new_auth_user_profile()
 returns trigger

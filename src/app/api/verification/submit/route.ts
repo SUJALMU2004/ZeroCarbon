@@ -3,6 +3,7 @@ import { createServerSupabaseClient } from "@/lib/supabase/server";
 import { sendVerificationEmail } from "@/lib/verification/send-verification-email";
 
 const MAX_DOC_BYTES = 5 * 1024 * 1024;
+const PENDING_RETRY_COOLDOWN_SECONDS = 60;
 const ALLOWED_DOC_MIME_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
 const ALLOWED_DOCUMENT_TYPES = new Set([
   "Aadhar",
@@ -29,6 +30,17 @@ function fileExtensionFromMime(mimeType: string): "jpg" | "png" | "webp" | null 
   if (mimeType === "image/png") return "png";
   if (mimeType === "image/webp") return "webp";
   return null;
+}
+
+function getPendingRetryRemainingSeconds(submittedAt: string | null): number {
+  if (!submittedAt) return 0;
+
+  const submittedTime = new Date(submittedAt).getTime();
+  if (Number.isNaN(submittedTime)) return 0;
+
+  const elapsedSeconds = Math.floor((Date.now() - submittedTime) / 1000);
+  const remaining = PENDING_RETRY_COOLDOWN_SECONDS - elapsedSeconds;
+  return remaining > 0 ? remaining : 0;
 }
 
 export async function POST(request: Request) {
@@ -70,7 +82,7 @@ export async function POST(request: Request) {
 
     const { data: profile, error: profileError } = await supabase
       .from("profiles")
-      .select("verification_status")
+      .select("verification_status, verification_submitted_at")
       .eq("id", user.id)
       .maybeSingle();
 
@@ -80,7 +92,13 @@ export async function POST(request: Request) {
 
     const verificationStatus = (profile?.verification_status ?? "not_submitted") as VerificationStatus;
     if (verificationStatus === "pending") {
-      return errorResponse("Verification is already under review. Re-upload is disabled.", 409);
+      const retryAfterSeconds = getPendingRetryRemainingSeconds(profile?.verification_submitted_at ?? null);
+      if (retryAfterSeconds > 0) {
+        return errorResponse(
+          `Please wait ${retryAfterSeconds} seconds before retrying verification submission.`,
+          429,
+        );
+      }
     }
 
     if (verificationStatus === "verified") {
@@ -127,11 +145,18 @@ export async function POST(request: Request) {
         supabase,
         userId: user.id,
       });
-    } catch {
+    } catch (error) {
+      console.error("verification_submit_email_failed", {
+        userId: user.id,
+        status: "pending",
+        stage: "send_verification_email",
+        reason: error instanceof Error ? error.message : "unknown_error",
+      });
+
       return NextResponse.json(
         {
           message:
-            "Document submitted and marked as pending, but admin email delivery failed. Please contact support if review is delayed.",
+            "Document submitted and marked as pending, but admin email delivery failed. You can retry by re-uploading after 60 seconds.",
           status: "pending",
           submittedAt,
         },
@@ -147,7 +172,12 @@ export async function POST(request: Request) {
       },
       { status: 200 },
     );
-  } catch {
+  } catch (error) {
+    console.error("verification_submit_failed", {
+      stage: "submit_verification",
+      reason: error instanceof Error ? error.message : "unknown_error",
+    });
+
     return errorResponse("Unable to process verification submission right now. Please try again.", 500);
   }
 }

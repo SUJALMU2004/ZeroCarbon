@@ -99,6 +99,22 @@ function getErrorMessage(error: unknown): string {
   return "Something went wrong. Please try again.";
 }
 
+function getVerificationButtonLabel(status: VerificationStatus, isSubmitting: boolean): string {
+  if (isSubmitting) {
+    return "Submitting...";
+  }
+
+  if (status === "pending") {
+    return "Re-upload & Retry Review";
+  }
+
+  if (status === "resubmit_required") {
+    return "Upload New Document";
+  }
+
+  return "Submit Verification";
+}
+
 export function ProfileForm({
   userId,
   initialFullName,
@@ -140,7 +156,9 @@ export function ProfileForm({
   const isBusy = isSaving || isUploading || isVerificationSubmitting;
   const changePasswordHref = `/forgot-password?email=${encodeURIComponent(initialEmail)}`;
   const canSubmitVerification =
-    verificationStatus === "not_submitted" || verificationStatus === "resubmit_required";
+    verificationStatus === "not_submitted" ||
+    verificationStatus === "pending" ||
+    verificationStatus === "resubmit_required";
 
   function clearFeedback() {
     if (error) setError(null);
@@ -428,7 +446,7 @@ export function ProfileForm({
 
         {verificationStatus === "pending" ? (
           <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-            Verification under review. Re-upload is disabled while pending.
+            Verification is under review. If admin did not receive the email, you can re-upload to retry.
             <div className="mt-1 text-xs text-amber-700">
               Submitted at: {verificationSubmittedAtFormatted}
             </div>
@@ -447,7 +465,9 @@ export function ProfileForm({
           </div>
         ) : null}
 
-        {(verificationStatus === "not_submitted" || verificationStatus === "resubmit_required") && (
+        {(verificationStatus === "not_submitted" ||
+          verificationStatus === "pending" ||
+          verificationStatus === "resubmit_required") && (
           <div className="mt-4 grid gap-4">
             <div>
               <label
@@ -499,7 +519,7 @@ export function ProfileForm({
               disabled={!canSubmitVerification || isBusy || !verificationFile}
               className="inline-flex items-center justify-center rounded-xl border border-sky-500 bg-gradient-to-r from-sky-500 to-blue-500 px-4 py-2.5 text-sm font-semibold text-white transition-all duration-200 hover:from-sky-400 hover:to-blue-400 disabled:cursor-not-allowed disabled:opacity-70"
             >
-              {isVerificationSubmitting ? "Submitting..." : "Submit Verification"}
+              {getVerificationButtonLabel(verificationStatus, isVerificationSubmitting)}
             </button>
           </div>
         )}
