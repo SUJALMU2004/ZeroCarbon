@@ -12,8 +12,12 @@ const RESEND_FROM = "ZeroCarbon Verification <onboarding@resend.dev>";
 
 type VerificationAction = "approve" | "reject" | "resubmit";
 
-function buildActionUrl(token: string, action: VerificationAction): string {
-  return `${APP_BASE_URL}/api/admin/verify-user?token=${encodeURIComponent(token)}&action=${action}`;
+function buildReviewUrl(token: string, action?: VerificationAction): string {
+  const base = `${APP_BASE_URL}/verification/review?token=${encodeURIComponent(token)}`;
+  if (!action) {
+    return base;
+  }
+  return `${base}&action=${action}`;
 }
 
 function formatCreatedAt(value: string | null): string {
@@ -88,9 +92,10 @@ export async function sendVerificationEmail({
       throw new Error(rotateTokenError.message);
     }
 
-    const approveUrl = buildActionUrl(rawToken, "approve");
-    const resubmitUrl = buildActionUrl(rawToken, "resubmit");
-    const rejectUrl = buildActionUrl(rawToken, "reject");
+    const approveUrl = buildReviewUrl(rawToken, "approve");
+    const resubmitUrl = buildReviewUrl(rawToken, "resubmit");
+    const rejectUrl = buildReviewUrl(rawToken, "reject");
+    const neutralReviewUrl = buildReviewUrl(rawToken);
 
     const fullName = profile.full_name?.trim() || "Not provided";
     const email = profile.email?.trim() || "Unavailable";
@@ -101,6 +106,9 @@ export async function sendVerificationEmail({
   <div style="font-family:Arial,sans-serif;line-height:1.5;color:#0f172a">
     <h2 style="margin:0 0 12px">New User Verification Request</h2>
     <p style="margin:0 0 16px">A user submitted a verification document for review.</p>
+    <div style="margin:0 0 16px;padding:10px 12px;border:1px solid #fde68a;background:#fffbeb;border-radius:8px;color:#92400e;font-size:13px">
+      If action buttons are blocked in an email preview, open this message in your inbox and use an external browser tab.
+    </div>
 
     <table style="border-collapse:collapse;width:100%;max-width:600px;margin-bottom:16px">
       <tr><td style="padding:8px;border:1px solid #e2e8f0;font-weight:600">Full Name</td><td style="padding:8px;border:1px solid #e2e8f0">${fullName}</td></tr>
@@ -119,6 +127,14 @@ export async function sendVerificationEmail({
       <a href="${resubmitUrl}" style="background:#f59e0b;color:#fff;text-decoration:none;padding:10px 14px;border-radius:8px;font-weight:600">Review: Ask for Different Document</a>
       <a href="${rejectUrl}" style="background:#dc2626;color:#fff;text-decoration:none;padding:10px 14px;border-radius:8px;font-weight:600">Review: Not Verify User</a>
     </div>
+
+    <p style="margin:14px 0 6px;font-weight:600">Fallback: open review page in browser</p>
+    <p style="margin:0 0 12px"><a href="${neutralReviewUrl}" style="color:#0f766e;word-break:break-all">${neutralReviewUrl}</a></p>
+
+    <p style="margin:12px 0 6px;font-weight:600">Direct fallback links</p>
+    <p style="margin:0;color:#334155;font-size:13px;word-break:break-all">Approve: <a href="${approveUrl}" style="color:#0f766e">${approveUrl}</a></p>
+    <p style="margin:4px 0 0;color:#334155;font-size:13px;word-break:break-all">Resubmit: <a href="${resubmitUrl}" style="color:#0f766e">${resubmitUrl}</a></p>
+    <p style="margin:4px 0 0;color:#334155;font-size:13px;word-break:break-all">Reject: <a href="${rejectUrl}" style="color:#0f766e">${rejectUrl}</a></p>
 
     <p style="margin-top:16px;color:#475569;font-size:12px">Each link opens a confirmation step, expires in ${TOKEN_EXPIRY_HOURS} hours, and can only be used once.</p>
   </div>`;
