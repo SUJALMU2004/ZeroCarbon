@@ -2,6 +2,7 @@ import "server-only";
 
 import { createHash, randomBytes } from "crypto";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import { formatAddressForEmail, type IdentityFields } from "@/lib/profile/identity-validation";
 
 const ADMIN_EMAIL = "learningtraverse@gmail.com";
 const APP_BASE_URL = "https://zerocarbonworld.vercel.app";
@@ -33,6 +34,34 @@ function formatCreatedAt(value: string | null): string {
   }).format(date);
 }
 
+function formatDateOfBirth(value: string | null): string {
+  if (!value) return "Not provided";
+
+  const date = new Date(`${value}T00:00:00Z`);
+  if (Number.isNaN(date.getTime())) return "Not provided";
+
+  return new Intl.DateTimeFormat("en-US", {
+    year: "numeric",
+    month: "short",
+    day: "2-digit",
+  }).format(date);
+}
+
+function formatDateTime(value: string | null): string {
+  if (!value) return "Unavailable";
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "Unavailable";
+
+  return new Intl.DateTimeFormat("en-US", {
+    year: "numeric",
+    month: "short",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(date);
+}
+
 export async function sendVerificationEmail({
   supabase,
   userId,
@@ -51,7 +80,9 @@ export async function sendVerificationEmail({
     stage = "load_profile";
     const { data: profile, error: profileError } = await supabase
       .from("profiles")
-      .select("full_name, email, created_at, verification_document_url, verification_document_type")
+      .select(
+        "full_name, email, created_at, date_of_birth, phone_number, address_line1, address_line2, city, state, postal_code, country, verification_document_url, verification_document_type, verification_submitted_at",
+      )
       .eq("id", userId)
       .maybeSingle();
 
@@ -100,7 +131,20 @@ export async function sendVerificationEmail({
     const fullName = profile.full_name?.trim() || "Not provided";
     const email = profile.email?.trim() || "Unavailable";
     const createdAt = formatCreatedAt(profile.created_at);
+    const dateOfBirth = formatDateOfBirth(profile.date_of_birth);
+    const phoneNumber = profile.phone_number?.trim() || "Not provided";
+    const identityAddress = formatAddressForEmail({
+      date_of_birth: profile.date_of_birth,
+      phone_number: profile.phone_number,
+      address_line1: profile.address_line1,
+      address_line2: profile.address_line2,
+      city: profile.city,
+      state: profile.state,
+      postal_code: profile.postal_code,
+      country: profile.country,
+    } as IdentityFields);
     const documentType = profile.verification_document_type?.trim() || "Not provided";
+    const submissionTime = formatDateTime(profile.verification_submitted_at);
 
     const html = `
   <div style="font-family:Arial,sans-serif;line-height:1.5;color:#0f172a">
@@ -114,7 +158,11 @@ export async function sendVerificationEmail({
       <tr><td style="padding:8px;border:1px solid #e2e8f0;font-weight:600">Full Name</td><td style="padding:8px;border:1px solid #e2e8f0">${fullName}</td></tr>
       <tr><td style="padding:8px;border:1px solid #e2e8f0;font-weight:600">Email</td><td style="padding:8px;border:1px solid #e2e8f0">${email}</td></tr>
       <tr><td style="padding:8px;border:1px solid #e2e8f0;font-weight:600">Account Created</td><td style="padding:8px;border:1px solid #e2e8f0">${createdAt}</td></tr>
+      <tr><td style="padding:8px;border:1px solid #e2e8f0;font-weight:600">Date of Birth</td><td style="padding:8px;border:1px solid #e2e8f0">${dateOfBirth}</td></tr>
+      <tr><td style="padding:8px;border:1px solid #e2e8f0;font-weight:600">Phone</td><td style="padding:8px;border:1px solid #e2e8f0">${phoneNumber}</td></tr>
+      <tr><td style="padding:8px;border:1px solid #e2e8f0;font-weight:600">Address</td><td style="padding:8px;border:1px solid #e2e8f0">${identityAddress}</td></tr>
       <tr><td style="padding:8px;border:1px solid #e2e8f0;font-weight:600">Document Type</td><td style="padding:8px;border:1px solid #e2e8f0">${documentType}</td></tr>
+      <tr><td style="padding:8px;border:1px solid #e2e8f0;font-weight:600">Submission Time</td><td style="padding:8px;border:1px solid #e2e8f0">${submissionTime}</td></tr>
     </table>
 
     <div style="margin:0 0 20px">
