@@ -12,6 +12,7 @@ type ConfirmPhonePayload = {
 type ProfilePhoneRow = {
   phone_number: string | null;
   phone_verified: boolean | null;
+  phone_verified_at: string | null;
   verification_status:
     | "not_submitted"
     | "pending"
@@ -56,7 +57,7 @@ export async function POST(request: Request) {
 
     const { data: profile, error: profileError } = await supabase
       .from("profiles")
-      .select("phone_number, phone_verified, verification_status")
+      .select("phone_number, phone_verified, phone_verified_at, verification_status")
       .eq("id", user.id)
       .maybeSingle();
 
@@ -76,6 +77,18 @@ export async function POST(request: Request) {
 
     if (!user.phone || user.phone !== phone || !user.phone_confirmed_at) {
       return errorResponse("Phone verification mismatch. Save and verify again.", 409);
+    }
+
+    if (typedProfile.phone_verified) {
+      return NextResponse.json(
+        {
+          message: "Phone number already verified.",
+          phone_verified: true,
+          phone_verified_at: typedProfile.phone_verified_at ?? user.phone_confirmed_at,
+          phone_number: phone,
+        },
+        { status: 200 },
+      );
     }
 
     const verifiedAt = new Date().toISOString();
@@ -108,8 +121,11 @@ export async function POST(request: Request) {
       },
       { status: 200 },
     );
-  } catch {
+  } catch (caughtError) {
+    console.error("confirm_phone_failed", {
+      stage: "unhandled",
+      reason: caughtError instanceof Error ? caughtError.message : "unknown",
+    });
     return errorResponse("Unable to confirm phone verification right now. Please try again.", 500);
   }
 }
-

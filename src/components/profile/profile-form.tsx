@@ -67,6 +67,13 @@ type IdentityPayload = {
   country: string | null;
 };
 
+type ConfirmPhoneResponse = {
+  message?: string;
+  phone_verified?: boolean;
+  phone_verified_at?: string | null;
+  phone_number?: string | null;
+};
+
 function formatCreatedAt(value: string | null): string {
   if (!value) return "Unavailable";
 
@@ -130,31 +137,147 @@ function getErrorMessage(error: unknown): string {
   return "Something went wrong. Please try again.";
 }
 
-function getOtpSendErrorMessage(error: unknown): string {
-  const message =
-    error instanceof Error
-      ? error.message ?? ""
-      : typeof error === "object" && error && "message" in error
-        ? String((error as { message?: unknown }).message ?? "")
-        : "";
+type AuthErrorDetails = {
+  message: string;
+  status: number | null;
+  code: string | null;
+};
 
-  if (!message) {
-    return "Unable to send OTP right now. Please try again.";
-  }
-  if (/Invalid phone number/i.test(message)) {
-    return "Please enter a valid phone number (e.g. +919876543210).";
-  }
-  if (/rate limit|too many requests|429/i.test(message)) {
-    return "Too many attempts. Please wait and retry.";
-  }
-  if (/sms|provider|phone auth disabled|otp/i.test(message)) {
-    return "SMS service is currently unavailable. Please try again later.";
-  }
-  if (/jwt|session|unauthorized|auth session missing|expired/i.test(message)) {
-    return "Your session expired. Please log in again.";
+type OtpSendErrorReason =
+  | "phone_conflict"
+  | "same_phone"
+  | "invalid_phone"
+  | "rate_limit"
+  | "provider"
+  | "session"
+  | "unknown";
+
+type OtpSendErrorClassification = {
+  reason: OtpSendErrorReason;
+  message: string;
+  status: number | null;
+  code: string | null;
+  shouldRetryWithResend: boolean;
+};
+
+function getAuthErrorDetails(error: unknown): AuthErrorDetails {
+  const fallbackMessage = error instanceof Error ? error.message ?? "" : "";
+  if (!error || typeof error !== "object") {
+    return {
+      message: fallbackMessage,
+      status: null,
+      code: null,
+    };
   }
 
-  return "Unable to send OTP right now. Please try again.";
+  const candidate = error as {
+    message?: unknown;
+    status?: unknown;
+    code?: unknown;
+  };
+  const parsedStatus =
+    typeof candidate.status === "number"
+      ? candidate.status
+      : typeof candidate.status === "string"
+        ? Number(candidate.status)
+        : null;
+
+  return {
+    message:
+      typeof candidate.message === "string"
+        ? candidate.message
+        : fallbackMessage,
+    status:
+      typeof parsedStatus === "number" && Number.isFinite(parsedStatus)
+        ? parsedStatus
+        : null,
+    code: typeof candidate.code === "string" ? candidate.code : null,
+  };
+}
+
+function classifyOtpSendError(error: unknown): OtpSendErrorClassification {
+  const details = getAuthErrorDetails(error);
+  const message = details.message;
+
+  if (
+    details.status === 401 ||
+    details.status === 403 ||
+    /jwt|session|unauthorized|auth session missing|expired/i.test(message)
+  ) {
+    return {
+      reason: "session",
+      message: "Your session expired. Please log in again.",
+      status: details.status,
+      code: details.code,
+      shouldRetryWithResend: false,
+    };
+  }
+
+  if (details.status === 429 || /rate limit|too many requests|throttl|429/i.test(message)) {
+    return {
+      reason: "rate_limit",
+      message: "Too many attempts. Please wait and retry.",
+      status: details.status,
+      code: details.code,
+      shouldRetryWithResend: false,
+    };
+  }
+
+  if (
+    details.status === 422 &&
+    /already.*(registered|exists|in use)|already been registered|phone.*(taken|in use|exists|registered)|duplicate/i.test(
+      message,
+    )
+  ) {
+    return {
+      reason: "phone_conflict",
+      message: "This phone number is already linked to another account. Use a different number.",
+      status: details.status,
+      code: details.code,
+      shouldRetryWithResend: false,
+    };
+  }
+
+  if (
+    details.status === 422 &&
+    /same|already set|not different from|different from current|already.*phone/i.test(message)
+  ) {
+    return {
+      reason: "same_phone",
+      message: "OTP already requested for this number. Use resend.",
+      status: details.status,
+      code: details.code,
+      shouldRetryWithResend: true,
+    };
+  }
+
+  if (/invalid|e\.164|phone number/i.test(message)) {
+    return {
+      reason: "invalid_phone",
+      message: "Please enter a valid phone number (e.g. +919876543210).",
+      status: details.status,
+      code: details.code,
+      shouldRetryWithResend: false,
+    };
+  }
+
+  if (/sms|provider|phone auth disabled|otp|twilio|messagebird|vonage/i.test(message)) {
+    return {
+      reason: "provider",
+      message: "SMS service is currently unavailable. Please try again later.",
+      status: details.status,
+      code: details.code,
+      shouldRetryWithResend: false,
+    };
+  }
+
+  return {
+    reason: "unknown",
+    message: "Unable to send OTP right now. Please try again.",
+    status: details.status,
+    code: details.code,
+    shouldRetryWithResend: false,
+  };
 }
 
 function getOtpVerifyErrorMessage(error: unknown): string {
@@ -289,6 +412,7 @@ export function ProfileForm({
   const isPhoneLocked = isIdentityLocked;
   const normalizedPhoneInput = normalizeOptionalText(phoneNumber);
   const normalizedSavedPhone = normalizeOptionalText(savedPhoneNumber);
+  const savedPhoneValidationError = validatePhoneNumber(normalizedSavedPhone);
   const isPhoneDirty = normalizedPhoneInput !== normalizedSavedPhone;
   const shouldShowPhoneVerifiedBadge =
     phoneVerified && !isPhoneDirty && Boolean(normalizedSavedPhone);
@@ -296,7 +420,8 @@ export function ProfileForm({
     !isIdentityLocked &&
     !isPhoneDirty &&
     Boolean(normalizedSavedPhone) &&
-    !phoneVerified;
+    !phoneVerified &&
+    !savedPhoneValidationError;
   const isBusy =
     isSaving ||
     isUploading ||
@@ -382,13 +507,90 @@ export function ProfileForm({
     };
   }
 
+  async function confirmPhoneWithServer(
+    phone: string,
+    fallbackSuccessMessage: string,
+  ): Promise<boolean> {
+    const response = await fetch("/api/profile/confirm-phone", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        phone,
+      }),
+    });
+
+    let body: ConfirmPhoneResponse | null = null;
+    try {
+      body = (await response.json()) as ConfirmPhoneResponse;
+    } catch {
+      body = null;
+    }
+
+    if (!response.ok) {
+      setPhoneOtpError(body?.message ?? "Phone verification failed. Please try again.");
+      return false;
+    }
+
+    setPhoneVerified(Boolean(body?.phone_verified));
+    setPhoneVerifiedAt(body?.phone_verified_at ?? new Date().toISOString());
+    setSavedPhoneNumber(body?.phone_number ?? phone);
+    setIsPhoneOtpModalOpen(false);
+    setPhoneOtpError(null);
+    setSuccess(body?.message ?? fallbackSuccessMessage);
+    return true;
+  }
+
+  function openPhoneOtpModal(isResend: boolean) {
+    setIsPhoneOtpModalOpen(true);
+    setResendCooldownSeconds(30);
+    setSuccess(
+      isResend
+        ? "OTP resent successfully."
+        : "OTP sent successfully. Enter the code to complete verification.",
+    );
+  }
+
+  function logPhoneOtpFailure(stage: string, classification: OtpSendErrorClassification) {
+    console.warn("phone_otp_send_failed", {
+      stage,
+      reason: classification.reason,
+      status: classification.status,
+      code: classification.code,
+    });
+  }
+
+  async function sendPhoneChangeResend(
+    supabase: ReturnType<typeof createBrowserSupabaseClient>,
+    targetPhone: string,
+    isResend: boolean,
+    stage: string,
+  ): Promise<boolean> {
+    const { error: resendError } = await supabase.auth.resend({
+      type: "phone_change",
+      phone: targetPhone,
+    });
+
+    if (resendError) {
+      const classification = classifyOtpSendError(resendError);
+      logPhoneOtpFailure(stage, classification);
+      setPhoneOtpError(classification.message);
+      return false;
+    }
+
+    openPhoneOtpModal(isResend);
+    return true;
+  }
+
   async function sendPhoneOtp(isResend: boolean) {
-    if (!normalizedSavedPhone) {
+    const targetPhone = normalizedSavedPhone;
+    if (!targetPhone) {
       setPhoneOtpError("Please enter a valid phone number (e.g. +919876543210).");
       return;
     }
 
-    const phoneValidationError = validatePhoneNumber(normalizedSavedPhone);
+    const phoneValidationError = validatePhoneNumber(targetPhone);
     if (phoneValidationError) {
       setPhoneOtpError(phoneValidationError);
       return;
@@ -405,24 +607,64 @@ export function ProfileForm({
 
     try {
       const supabase = createBrowserSupabaseClient();
-      const { error: otpSendError } = await supabase.auth.updateUser({
-        phone: normalizedSavedPhone,
-      });
+      const {
+        data: { user: authUser },
+        error: authUserError,
+      } = await supabase.auth.getUser();
 
-      if (otpSendError) {
-        setPhoneOtpError(getOtpSendErrorMessage(otpSendError));
+      if (authUserError || !authUser) {
+        const classification = classifyOtpSendError(authUserError);
+        logPhoneOtpFailure("auth_user_lookup", classification);
+        setPhoneOtpError(classification.message);
         return;
       }
 
-      setIsPhoneOtpModalOpen(true);
-      setResendCooldownSeconds(30);
-      setSuccess(
-        isResend
-          ? "OTP resent successfully."
-          : "OTP sent successfully. Enter the code to complete verification.",
-      );
+      const authPhone = normalizeOptionalText(authUser.phone);
+      const authPhoneConfirmed = Boolean(authUser.phone_confirmed_at);
+
+      if (authPhone === targetPhone && authPhoneConfirmed) {
+        await confirmPhoneWithServer(targetPhone, "Phone number verified successfully.");
+        return;
+      }
+
+      if (authPhone === targetPhone && !authPhoneConfirmed) {
+        await sendPhoneChangeResend(
+          supabase,
+          targetPhone,
+          isResend,
+          "resend_existing_phone_change",
+        );
+        return;
+      }
+
+      const { error: otpSendError } = await supabase.auth.updateUser({
+        phone: targetPhone,
+      });
+
+      if (otpSendError) {
+        const classification = classifyOtpSendError(otpSendError);
+        logPhoneOtpFailure("update_user", classification);
+        if (classification.shouldRetryWithResend) {
+          const resendSucceeded = await sendPhoneChangeResend(
+            supabase,
+            targetPhone,
+            isResend,
+            "resend_after_same_phone_422",
+          );
+          if (resendSucceeded) {
+            return;
+          }
+        }
+
+        setPhoneOtpError(classification.message);
+        return;
+      }
+
+      openPhoneOtpModal(isResend);
     } catch (caughtError) {
-      setPhoneOtpError(getOtpSendErrorMessage(caughtError));
+      const classification = classifyOtpSendError(caughtError);
+      logPhoneOtpFailure("send_phone_otp_unhandled", classification);
+      setPhoneOtpError(classification.message);
     } finally {
       setIsSendingPhoneOtp(false);
       setIsResendingPhoneOtp(false);
@@ -472,46 +714,7 @@ export function ProfileForm({
         return;
       }
 
-      const response = await fetch("/api/profile/confirm-phone", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          phone: normalizedSavedPhone,
-        }),
-      });
-
-      let body:
-        | {
-            message?: string;
-            phone_verified?: boolean;
-            phone_verified_at?: string | null;
-            phone_number?: string | null;
-          }
-        | null = null;
-      try {
-        body = (await response.json()) as {
-          message?: string;
-          phone_verified?: boolean;
-          phone_verified_at?: string | null;
-          phone_number?: string | null;
-        };
-      } catch {
-        body = null;
-      }
-
-      if (!response.ok) {
-        setPhoneOtpError(body?.message ?? "Phone verification failed. Please try again.");
-        return;
-      }
-
-      setPhoneVerified(Boolean(body?.phone_verified));
-      setPhoneVerifiedAt(body?.phone_verified_at ?? new Date().toISOString());
-      setSavedPhoneNumber(body?.phone_number ?? normalizedSavedPhone);
-      setIsPhoneOtpModalOpen(false);
-      setPhoneOtpError(null);
-      setSuccess(body?.message ?? "Phone number verified successfully.");
+      await confirmPhoneWithServer(normalizedSavedPhone, "Phone number verified successfully.");
     } catch (caughtError) {
       setPhoneOtpError(getOtpVerifyErrorMessage(caughtError));
     } finally {
@@ -905,6 +1108,14 @@ export function ProfileForm({
               {!isIdentityLocked && isPhoneDirty && Boolean(normalizedPhoneInput) ? (
                 <p className="mt-1 text-xs text-amber-700">
                   Save changes to verify this number.
+                </p>
+              ) : null}
+              {!isIdentityLocked &&
+              !isPhoneDirty &&
+              Boolean(normalizedSavedPhone) &&
+              savedPhoneValidationError ? (
+                <p className="mt-1 text-xs text-amber-700">
+                  Save in +countrycode format (e.g. +919876543210) before verifying.
                 </p>
               ) : null}
               {!isIdentityLocked && shouldShowPhoneVerifiedBadge ? (
