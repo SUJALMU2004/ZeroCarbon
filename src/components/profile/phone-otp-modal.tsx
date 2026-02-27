@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type KeyboardEvent } from "react";
+import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent } from "react";
 
 type PhoneOtpModalProps = {
   isOpen: boolean;
@@ -31,10 +31,28 @@ export function PhoneOtpModal({
 }: PhoneOtpModalProps) {
   const [otpCode, setOtpCode] = useState("");
   const [localError, setLocalError] = useState<string | null>(null);
+  const otpInputRef = useRef<HTMLInputElement | null>(null);
 
-  if (!isOpen) {
-    return null;
-  }
+  useEffect(() => {
+    if (!isOpen) return;
+    const frame = window.requestAnimationFrame(() => otpInputRef.current?.focus());
+    return () => window.cancelAnimationFrame(frame);
+  }, [isOpen]);
+
+  useEffect(() => {
+    if (!isOpen) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      if (isSubmitting) return;
+      event.preventDefault();
+      onClose();
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [isOpen, isSubmitting, onClose]);
+
+  if (!isOpen) return null;
 
   async function handleSubmitOtp() {
     if (isSubmitting) {
@@ -55,7 +73,7 @@ export function PhoneOtpModal({
     await onResend();
   }
 
-  async function handleOtpInputKeyDown(event: KeyboardEvent<HTMLInputElement>) {
+  async function handleOtpInputKeyDown(event: ReactKeyboardEvent<HTMLInputElement>) {
     if (event.key !== "Enter") {
       return;
     }
@@ -65,19 +83,20 @@ export function PhoneOtpModal({
   }
 
   return (
-    <div className="fixed inset-0 z-[120] flex items-center justify-center bg-slate-900/50 p-4">
+    <div className="fixed inset-0 z-[120] flex items-center justify-center bg-slate-900/50 p-4 transition-opacity duration-200">
       <div
         role="dialog"
         aria-modal="true"
         aria-labelledby="phone-otp-title"
-        className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-5 shadow-xl"
+        className="w-full max-w-md rounded-3xl border border-slate-200 bg-white p-6 shadow-2xl transition-all duration-200"
       >
-        <h3 id="phone-otp-title" className="text-lg font-semibold text-slate-900">
+        <h3 id="phone-otp-title" className="text-xl font-semibold tracking-tight text-slate-900">
           Verify Phone Number
         </h3>
         <p className="mt-2 text-sm text-slate-600">
           Enter the 6-digit OTP sent to <span className="font-semibold text-slate-800">{phone}</span>.
         </p>
+        <p className="mt-1 text-xs text-slate-500">You can request a new OTP every 60 seconds.</p>
 
         <div className="mt-4 space-y-4">
           <div>
@@ -85,6 +104,7 @@ export function PhoneOtpModal({
               OTP Code
             </label>
             <input
+              ref={otpInputRef}
               id="phone-otp-code"
               type="text"
               inputMode="numeric"
@@ -97,6 +117,12 @@ export function PhoneOtpModal({
               className="w-full rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-slate-900 outline-none transition-colors duration-200 focus:border-emerald-400 focus:ring-2 focus:ring-emerald-200 disabled:cursor-not-allowed disabled:opacity-70"
             />
           </div>
+
+          <p className="text-xs text-slate-500">
+            {resendCooldownSeconds > 0
+              ? `Resend available in ${resendCooldownSeconds}s`
+              : "You can resend OTP now."}
+          </p>
 
           {localError ? (
             <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">

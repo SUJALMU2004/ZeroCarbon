@@ -3,6 +3,7 @@ import "./globals.css";
 import { ZeroCarbonFooter } from "@/components/ui/zerocarbon-footer";
 import { ZeroCarbonNavbar } from "@/components/ui/zerocarbon-navbar";
 import { GlobalTilesBackground } from "@/components/ui/global-tiles-background";
+import { Toaster } from "sonner";
 
 export const metadata: Metadata = {
   metadataBase: new URL("https://zerocarbonworld.vercel.app"),
@@ -81,6 +82,7 @@ export default function RootLayout({
         <ZeroCarbonNavbar />
         <div className="relative z-10 min-h-screen pt-24 md:pt-28">{children}</div>
         <ZeroCarbonFooter />
+        <Toaster position="top-right" richColors closeButton />
       </body>
     </html>
   );
