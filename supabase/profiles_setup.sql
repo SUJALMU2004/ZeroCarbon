@@ -85,6 +85,9 @@ alter table public.profiles
   add column if not exists phone_verified_at timestamptz;
 
 alter table public.profiles
+  add column if not exists phone_otp_last_sent_at timestamptz;
+
+alter table public.profiles
   add column if not exists profile_updated_at timestamptz not null default now();
 
 -- Keep existing rows aligned with the default.
@@ -96,6 +99,11 @@ update public.profiles
 set phone_verified_at = null
 where phone_verified = false
   and phone_verified_at is not null;
+
+update public.profiles
+set phone_otp_last_sent_at = null
+where phone_verified = false
+  and phone_otp_last_sent_at is not null;
 
 -- Data consistency check for pending status.
 do $$
@@ -167,9 +175,6 @@ language plpgsql
 security definer
 set search_path = public
 as $$
-declare
-  v_auth_phone text;
-  v_phone_confirmed_at timestamptz;
 begin
   if coalesce(auth.role(), '') = 'service_role' then
     return new;
@@ -192,6 +197,7 @@ begin
   if new.phone_number is distinct from old.phone_number then
     new.phone_verified := false;
     new.phone_verified_at := null;
+    new.phone_otp_last_sent_at := null;
   end if;
 
   if coalesce(new.phone_verified, false) = false then
@@ -200,20 +206,8 @@ begin
 
   if coalesce(old.phone_verified, false) = false
     and coalesce(new.phone_verified, false) = true then
-    if auth.uid() is null then
-      raise exception 'Unauthorized request.';
-    end if;
-
-    select u.phone, u.phone_confirmed_at
-    into v_auth_phone, v_phone_confirmed_at
-    from auth.users u
-    where u.id = auth.uid();
-
-    if v_auth_phone is null
-      or v_phone_confirmed_at is null
-      or new.phone_number is null
-      or v_auth_phone is distinct from new.phone_number then
-      raise exception 'Phone verification mismatch. Save and verify again.';
+    if coalesce(auth.role(), '') <> 'service_role' then
+      raise exception 'Phone verification must be completed via server verification route.';
     end if;
 
     if new.phone_verified_at is null then

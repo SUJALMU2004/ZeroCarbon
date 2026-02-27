@@ -90,7 +90,7 @@ export async function POST(request: Request) {
     const { data: profile, error: profileError } = await supabase
       .from("profiles")
       .select(
-        "verification_status, verification_submitted_at, date_of_birth, phone_number, address_line1, address_line2, city, state, postal_code, country",
+        "verification_status, verification_submitted_at, phone_verified, date_of_birth, phone_number, address_line1, address_line2, city, state, postal_code, country",
       )
       .eq("id", user.id)
       .maybeSingle();
@@ -106,6 +106,13 @@ export async function POST(request: Request) {
 
     if (verificationStatus === "verified") {
       return errorResponse("Your account is already verified.", 409);
+    }
+
+    if (!profile?.phone_verified) {
+      return errorResponse(
+        "Phone number must be verified before identity submission.",
+        409,
+      );
     }
 
     if (
