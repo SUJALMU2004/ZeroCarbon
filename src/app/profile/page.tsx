@@ -7,6 +7,17 @@ type ProfileRow = {
   email: string | null;
   avatar_url: string | null;
   created_at: string | null;
+  date_of_birth: string | null;
+  phone_number: string | null;
+  address_line1: string | null;
+  address_line2: string | null;
+  city: string | null;
+  state: string | null;
+  postal_code: string | null;
+  country: string | null;
+  phone_verified: boolean | null;
+  phone_verified_at: string | null;
+  profile_updated_at: string | null;
   verification_status:
     | "not_submitted"
     | "pending"
@@ -31,7 +42,7 @@ export default async function ProfilePage() {
   const { data: profileData } = await supabase
     .from("profiles")
     .select(
-      "full_name, email, avatar_url, created_at, verification_status, verification_document_type, verification_submitted_at",
+      "full_name, email, avatar_url, created_at, date_of_birth, phone_number, address_line1, address_line2, city, state, postal_code, country, phone_verified, phone_verified_at, profile_updated_at, verification_status, verification_document_type, verification_submitted_at",
     )
     .eq("id", user.id)
     .maybeSingle();
@@ -41,6 +52,17 @@ export default async function ProfilePage() {
     email: profileData?.email ?? null,
     avatar_url: profileData?.avatar_url ?? null,
     created_at: profileData?.created_at ?? null,
+    date_of_birth: profileData?.date_of_birth ?? null,
+    phone_number: profileData?.phone_number ?? null,
+    address_line1: profileData?.address_line1 ?? null,
+    address_line2: profileData?.address_line2 ?? null,
+    city: profileData?.city ?? null,
+    state: profileData?.state ?? null,
+    postal_code: profileData?.postal_code ?? null,
+    country: profileData?.country ?? null,
+    phone_verified: profileData?.phone_verified ?? false,
+    phone_verified_at: profileData?.phone_verified_at ?? null,
+    profile_updated_at: profileData?.profile_updated_at ?? null,
     verification_status: profileData?.verification_status ?? "not_submitted",
     verification_document_type: profileData?.verification_document_type ?? null,
     verification_submitted_at: profileData?.verification_submitted_at ?? null,
@@ -80,6 +102,16 @@ export default async function ProfilePage() {
           initialEmail={email}
           initialAvatarUrl={profile?.avatar_url ?? null}
           initialCreatedAt={profile?.created_at ?? null}
+          initialDateOfBirth={profile?.date_of_birth ?? null}
+          initialPhoneNumber={profile?.phone_number ?? null}
+          initialAddressLine1={profile?.address_line1 ?? null}
+          initialAddressLine2={profile?.address_line2 ?? null}
+          initialCity={profile?.city ?? null}
+          initialState={profile?.state ?? null}
+          initialPostalCode={profile?.postal_code ?? null}
+          initialCountry={profile?.country ?? null}
+          initialPhoneVerified={Boolean(profile?.phone_verified)}
+          initialPhoneVerifiedAt={profile?.phone_verified_at ?? null}
           initialVerificationStatus={profile?.verification_status ?? "not_submitted"}
           initialVerificationDocumentType={profile?.verification_document_type ?? null}
           initialVerificationSubmittedAt={profile?.verification_submitted_at ?? null}

@@ -54,8 +54,116 @@ alter table public.profiles
 alter table public.profiles
   add column if not exists created_at timestamptz not null default now();
 
+alter table public.profiles
+  add column if not exists date_of_birth date;
+
+alter table public.profiles
+  add column if not exists phone_number text;
+
+alter table public.profiles
+  add column if not exists address_line1 text;
+
+alter table public.profiles
+  add column if not exists address_line2 text;
+
+alter table public.profiles
+  add column if not exists city text;
+
+alter table public.profiles
+  add column if not exists state text;
+
+alter table public.profiles
+  add column if not exists postal_code text;
+
+alter table public.profiles
+  add column if not exists country text;
+
+alter table public.profiles
+  add column if not exists phone_verified boolean not null default false;
+
+alter table public.profiles
+  add column if not exists phone_verified_at timestamptz;
+
+alter table public.profiles
+  add column if not exists phone_otp_last_sent_at timestamptz;
+
+alter table public.profiles
+  add column if not exists profile_updated_at timestamptz not null default now();
+
 -- RLS can be enabled safely even if already enabled.
 alter table public.profiles enable row level security;
+
+create or replace function public.handle_profile_updated_at()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  new.profile_updated_at := now();
+  return new;
+end;
+$$;
+
+drop trigger if exists before_profiles_set_profile_updated_at on public.profiles;
+create trigger before_profiles_set_profile_updated_at
+before update on public.profiles
+for each row execute function public.handle_profile_updated_at();
+
+create or replace function public.enforce_profile_identity_locks()
+returns trigger
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if coalesce(auth.role(), '') = 'service_role' then
+    return new;
+  end if;
+
+  if old.verification_status = 'verified'
+    and (
+      new.date_of_birth is distinct from old.date_of_birth
+      or new.phone_number is distinct from old.phone_number
+      or new.address_line1 is distinct from old.address_line1
+      or new.address_line2 is distinct from old.address_line2
+      or new.city is distinct from old.city
+      or new.state is distinct from old.state
+      or new.postal_code is distinct from old.postal_code
+      or new.country is distinct from old.country
+    ) then
+    raise exception 'Identity details cannot be edited after verification.';
+  end if;
+
+  if new.phone_number is distinct from old.phone_number then
+    new.phone_verified := false;
+    new.phone_verified_at := null;
+    new.phone_otp_last_sent_at := null;
+  end if;
+
+  if coalesce(new.phone_verified, false) = false then
+    new.phone_verified_at := null;
+  end if;
+
+  if coalesce(old.phone_verified, false) = false
+    and coalesce(new.phone_verified, false) = true then
+    if coalesce(auth.role(), '') <> 'service_role' then
+      raise exception 'Phone verification must be completed via server verification route.';
+    end if;
+
+    if new.phone_verified_at is null then
+      new.phone_verified_at := now();
+    end if;
+  end if;
+
+  return new;
+end;
+$$;
+
+drop trigger if exists before_profiles_enforce_identity_locks on public.profiles;
+create trigger before_profiles_enforce_identity_locks
+before update on public.profiles
+for each row execute function public.enforce_profile_identity_locks();
 
 insert into public.profiles (id, role, email)
 select u.id, 'user', u.email
@@ -75,6 +183,16 @@ update public.profiles
 set verification_status = 'not_submitted'
 where verification_status is null;
 
+update public.profiles
+set phone_verified_at = null
+where phone_verified = false
+  and phone_verified_at is not null;
+
+update public.profiles
+set phone_otp_last_sent_at = null
+where phone_verified = false
+  and phone_otp_last_sent_at is not null;
+
 -- Email is required in profiles.
 alter table public.profiles
   alter column email set not null;
@@ -90,6 +208,41 @@ create table if not exists public.verification_tokens (
   used_at timestamptz,
   action_taken text
 );
+
+create table if not exists public.verification_submissions (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users (id) on delete cascade,
+  version integer not null,
+  document_path text not null,
+  document_type text not null,
+  status public.verification_status_enum not null,
+  submitted_at timestamptz not null default now(),
+  reviewed_at timestamptz,
+  review_action text
+);
+
+create unique index if not exists verification_submissions_user_version_idx
+  on public.verification_submissions (user_id, version);
+
+create index if not exists verification_submissions_user_submitted_idx
+  on public.verification_submissions (user_id, submitted_at desc);
+
+alter table public.verification_submissions enable row level security;
+
+drop policy if exists "Verification submissions select own" on public.verification_submissions;
+drop policy if exists "Verification submissions insert own" on public.verification_submissions;
+
+create policy "Verification submissions select own"
+on public.verification_submissions
+for select
+to authenticated
+using (user_id = auth.uid());
+
+create policy "Verification submissions insert own"
+on public.verification_submissions
+for insert
+to authenticated
+with check (user_id = auth.uid());
 
 create or replace function public.rotate_verification_token(
   p_user_id uuid,

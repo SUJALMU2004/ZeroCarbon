@@ -1,9 +1,26 @@
 "use client";
 
-import { useRef, useState, type ChangeEvent, type FormEvent } from "react";
+import { useEffect, useRef, useState, type ChangeEvent, type FormEvent } from "react";
 import Link from "next/link";
-import { LogoutButton } from "@/components/auth/logout-button";
+import { toast } from "sonner";
 import { createBrowserSupabaseClient } from "@/lib/supabase/client";
+import { PhoneOtpModal } from "@/components/profile/phone-otp-modal";
+import { CountryCombobox } from "@/components/profile/country-combobox";
+import { IdentityStatusBadge } from "@/components/profile/identity-status-badge";
+import {
+  getMissingRequiredIdentityFields,
+  normalizeOptionalText,
+  validateDateOfBirth,
+  validatePhoneNumber,
+  validatePostalCode,
+  type IdentityFields,
+} from "@/lib/profile/identity-validation";
+import {
+  COUNTRY_CODE_OPTIONS,
+  DEFAULT_COUNTRY_CODE,
+  splitE164Phone,
+  buildE164Phone,
+} from "@/lib/profile/country-codes";
 
 const MAX_AVATAR_BYTES = 2 * 1024 * 1024;
 const ALLOWED_AVATAR_TYPES = new Set(["image/jpeg", "image/png", "image/webp"]);
@@ -18,6 +35,15 @@ const VERIFICATION_DOCUMENT_TYPES = [
   "Other Government ID",
 ] as const;
 
+const LOCAL_PHONE_PLACEHOLDERS: Record<string, string> = {
+  "+1": "2015550123",
+  "+44": "7400123456",
+  "+61": "412345678",
+  "+65": "81234567",
+  "+91": "9876543210",
+  "+971": "501234567",
+};
+
 type VerificationStatus =
   | "not_submitted"
   | "pending"
@@ -31,9 +57,40 @@ type ProfileFormProps = {
   initialEmail: string;
   initialAvatarUrl: string | null;
   initialCreatedAt: string | null;
+  initialDateOfBirth: string | null;
+  initialPhoneNumber: string | null;
+  initialAddressLine1: string | null;
+  initialAddressLine2: string | null;
+  initialCity: string | null;
+  initialState: string | null;
+  initialPostalCode: string | null;
+  initialCountry: string | null;
+  initialPhoneVerified: boolean;
+  initialPhoneVerifiedAt: string | null;
   initialVerificationStatus: VerificationStatus | null;
   initialVerificationDocumentType: string | null;
   initialVerificationSubmittedAt: string | null;
+};
+
+type IdentityPayload = {
+  full_name: string | null;
+  date_of_birth: string | null;
+  phone_number: string | null;
+  address_line1: string | null;
+  address_line2: string | null;
+  city: string | null;
+  state: string | null;
+  postal_code: string | null;
+  country: string | null;
+};
+
+type ConfirmPhoneResponse = {
+  message?: string;
+  code?: string;
+  retryAfterSeconds?: number;
+  phone_verified?: boolean;
+  phone_verified_at?: string | null;
+  phone_number?: string | null;
 };
 
 function formatCreatedAt(value: string | null): string {
@@ -99,20 +156,70 @@ function getErrorMessage(error: unknown): string {
   return "Something went wrong. Please try again.";
 }
 
+function getOtpRequestErrorMessage(error: unknown): string {
+  const message =
+    error instanceof Error
+      ? error.message ?? ""
+      : typeof error === "object" && error && "message" in error
+        ? String((error as { message?: unknown }).message ?? "")
+        : "";
+
+  if (!message) {
+    return "Unable to process OTP right now. Please try again.";
+  }
+  if (/invalid|expired|otp|token|code/i.test(message)) {
+    return "Invalid or expired OTP. Please try again.";
+  }
+  if (/rate limit|too many requests|429/i.test(message)) {
+    return "Too many attempts. Please wait and retry.";
+  }
+  if (/jwt|session|unauthorized|auth session missing|expired/i.test(message)) {
+    return "Your session expired. Please log in again.";
+  }
+
+  return "Unable to process OTP right now. Please try again.";
+}
+
+function normalizeLocalPhoneInput(value: string): string {
+  return value.replace(/[^\d]/g, "");
+}
+
 function getVerificationButtonLabel(status: VerificationStatus, isSubmitting: boolean): string {
   if (isSubmitting) {
     return "Submitting...";
-  }
-
-  if (status === "pending") {
-    return "Re-upload & Retry Review";
   }
 
   if (status === "resubmit_required") {
     return "Upload New Document";
   }
 
+  if (status === "rejected") {
+    return "Upload Different Document";
+  }
+
   return "Submit Verification";
+}
+
+function buildIdentityFields(fields: {
+  dateOfBirth: string;
+  phoneNumber: string;
+  addressLine1: string;
+  addressLine2: string;
+  city: string;
+  state: string;
+  postalCode: string;
+  country: string;
+}): IdentityFields {
+  return {
+    date_of_birth: normalizeOptionalText(fields.dateOfBirth),
+    phone_number: normalizeOptionalText(fields.phoneNumber),
+    address_line1: normalizeOptionalText(fields.addressLine1),
+    address_line2: normalizeOptionalText(fields.addressLine2),
+    city: normalizeOptionalText(fields.city),
+    state: normalizeOptionalText(fields.state),
+    postal_code: normalizeOptionalText(fields.postalCode),
+    country: normalizeOptionalText(fields.country),
+  };
 }
 
 export function ProfileForm({
@@ -121,6 +228,16 @@ export function ProfileForm({
   initialEmail,
   initialAvatarUrl,
   initialCreatedAt,
+  initialDateOfBirth,
+  initialPhoneNumber,
+  initialAddressLine1,
+  initialAddressLine2,
+  initialCity,
+  initialState,
+  initialPostalCode,
+  initialCountry,
+  initialPhoneVerified,
+  initialPhoneVerifiedAt,
   initialVerificationStatus,
   initialVerificationDocumentType,
   initialVerificationSubmittedAt,
@@ -129,12 +246,33 @@ export function ProfileForm({
   const uploadInFlightRef = useRef(false);
   const verificationInFlightRef = useRef(false);
   const verificationFileInputRef = useRef<HTMLInputElement | null>(null);
+  const verifyButtonRef = useRef<HTMLButtonElement | null>(null);
+  const initialPhoneParts = splitE164Phone(initialPhoneNumber);
 
   const [fullName, setFullName] = useState(initialFullName ?? "");
+  const [dateOfBirth, setDateOfBirth] = useState(initialDateOfBirth ?? "");
+  const [phoneCountryCode, setPhoneCountryCode] = useState(initialPhoneParts.countryCode);
+  const [phoneLocalNumber, setPhoneLocalNumber] = useState(initialPhoneParts.localNumber);
+  const [addressLine1, setAddressLine1] = useState(initialAddressLine1 ?? "");
+  const [addressLine2, setAddressLine2] = useState(initialAddressLine2 ?? "");
+  const [city, setCity] = useState(initialCity ?? "");
+  const [stateValue, setStateValue] = useState(initialState ?? "");
+  const [postalCode, setPostalCode] = useState(initialPostalCode ?? "");
+  const [country, setCountry] = useState(initialCountry ?? "");
+  const [savedPhoneNumber, setSavedPhoneNumber] = useState(initialPhoneNumber ?? "");
+  const [phoneVerified, setPhoneVerified] = useState(Boolean(initialPhoneVerified));
+  const [phoneVerifiedAt, setPhoneVerifiedAt] = useState(initialPhoneVerifiedAt);
+  const [isPhoneUnlocked, setIsPhoneUnlocked] = useState(false);
   const [avatarUrl, setAvatarUrl] = useState(initialAvatarUrl);
   const [isSaving, setIsSaving] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [isVerificationSubmitting, setIsVerificationSubmitting] = useState(false);
+  const [isSendingPhoneOtp, setIsSendingPhoneOtp] = useState(false);
+  const [isVerifyingPhoneOtp, setIsVerifyingPhoneOtp] = useState(false);
+  const [isResendingPhoneOtp, setIsResendingPhoneOtp] = useState(false);
+  const [resendCooldownSeconds, setResendCooldownSeconds] = useState(0);
+  const [isPhoneOtpModalOpen, setIsPhoneOtpModalOpen] = useState(false);
+  const [phoneOtpError, setPhoneOtpError] = useState<string | null>(null);
   const [verificationStatus, setVerificationStatus] = useState<VerificationStatus>(
     initialVerificationStatus ?? "not_submitted",
   );
@@ -148,51 +286,429 @@ export function ProfileForm({
     initialVerificationSubmittedAt,
   );
   const [error, setError] = useState<string | null>(null);
-  const [success, setSuccess] = useState<string | null>(null);
 
   const createdAt = formatCreatedAt(initialCreatedAt);
   const verificationSubmittedAtFormatted = formatTimestamp(verificationSubmittedAt);
+  const phoneVerifiedAtFormatted = formatTimestamp(phoneVerifiedAt);
   const initials = getInitials(fullName, initialEmail);
-  const isBusy = isSaving || isUploading || isVerificationSubmitting;
+  const selectedCountryCode =
+    phoneCountryCode.trim().length > 0 ? phoneCountryCode : DEFAULT_COUNTRY_CODE;
+  const selectedCountry =
+    COUNTRY_CODE_OPTIONS.find((option) => option.dialCode === selectedCountryCode) ??
+    COUNTRY_CODE_OPTIONS.find((option) => option.dialCode === DEFAULT_COUNTRY_CODE) ??
+    COUNTRY_CODE_OPTIONS[0];
+  const localPhonePlaceholder =
+    LOCAL_PHONE_PLACEHOLDERS[selectedCountryCode] ?? LOCAL_PHONE_PLACEHOLDERS["+1"];
+  const builtPhoneInput = buildE164Phone(selectedCountryCode, phoneLocalNumber);
+  const isIdentityLocked = verificationStatus === "verified";
+  const isPhoneVerificationLocked = phoneVerified && !isPhoneUnlocked;
+  const isPhoneLocked = isIdentityLocked || isPhoneVerificationLocked;
+  const normalizedPhoneInput = normalizeOptionalText(builtPhoneInput);
+  const normalizedSavedPhone = normalizeOptionalText(savedPhoneNumber);
+  const savedPhoneValidationError = validatePhoneNumber(normalizedSavedPhone);
+  const isPhoneDirty = normalizedPhoneInput !== normalizedSavedPhone;
+  const shouldShowPhoneVerifiedBadge =
+    phoneVerified && !isPhoneDirty && Boolean(normalizedSavedPhone);
+  const canVerifyPhone =
+    !isIdentityLocked &&
+    !phoneVerified &&
+    !isPhoneDirty &&
+    Boolean(normalizedSavedPhone) &&
+    !savedPhoneValidationError;
+  const isVerifyCooldownActive = resendCooldownSeconds > 0;
+  const isBusy =
+    isSaving ||
+    isUploading ||
+    isVerificationSubmitting ||
+    isSendingPhoneOtp ||
+    isVerifyingPhoneOtp ||
+    isResendingPhoneOtp;
   const changePasswordHref = `/forgot-password?email=${encodeURIComponent(initialEmail)}`;
   const canSubmitVerification =
     verificationStatus === "not_submitted" ||
-    verificationStatus === "pending" ||
-    verificationStatus === "resubmit_required";
+    verificationStatus === "resubmit_required" ||
+    verificationStatus === "rejected";
+  const isPhoneReadyForIdentitySubmission =
+    phoneVerified && !isPhoneDirty && Boolean(normalizedSavedPhone);
+  const canSubmitVerificationNow = canSubmitVerification && isPhoneReadyForIdentitySubmission;
+  const canShowPhoneChangeAction =
+    !isIdentityLocked &&
+    shouldShowPhoneVerifiedBadge &&
+    !isPhoneOtpModalOpen &&
+    !isBusy;
+  const canShowVerifyButton = canVerifyPhone;
+  const shouldShowPhoneSavedHint =
+    !isIdentityLocked && isPhoneDirty && Boolean(normalizedPhoneInput);
+  const shouldShowPhoneValidationHint =
+    !isIdentityLocked &&
+    !isPhoneDirty &&
+    Boolean(normalizedSavedPhone) &&
+    Boolean(savedPhoneValidationError);
+  const shouldShowPhoneUnlockHint = isPhoneUnlocked && !isIdentityLocked;
+
+  useEffect(() => {
+    if (resendCooldownSeconds <= 0) {
+      return;
+    }
+
+    const timerId = window.setInterval(() => {
+      setResendCooldownSeconds((prev) => (prev > 0 ? prev - 1 : 0));
+    }, 1000);
+
+    return () => {
+      window.clearInterval(timerId);
+    };
+  }, [resendCooldownSeconds]);
 
   function clearFeedback() {
     if (error) setError(null);
-    if (success) setSuccess(null);
+  }
+
+  function validateIdentityForSave(identityFields: IdentityFields): string | null {
+    const dobValidationError = validateDateOfBirth(identityFields.date_of_birth);
+    if (dobValidationError) {
+      return dobValidationError;
+    }
+
+    const phoneValidationError = validatePhoneNumber(identityFields.phone_number);
+    if (phoneValidationError) {
+      return phoneValidationError;
+    }
+
+    const postalValidationError = validatePostalCode(identityFields.postal_code);
+    if (postalValidationError) {
+      return postalValidationError;
+    }
+
+    return null;
+  }
+
+  function validateIdentityForVerification(identityFields: IdentityFields): string | null {
+    const missingFields = getMissingRequiredIdentityFields(identityFields);
+    if (missingFields.length > 0) {
+      return "Complete date of birth, phone, and address details before submitting verification.";
+    }
+
+    return validateIdentityForSave(identityFields);
+  }
+
+  function buildPayload(): IdentityPayload {
+    const identityFields = buildIdentityFields({
+      dateOfBirth,
+      phoneNumber: normalizedPhoneInput ?? "",
+      addressLine1,
+      addressLine2,
+      city,
+      state: stateValue,
+      postalCode,
+      country,
+    });
+
+    return {
+      full_name: normalizeOptionalText(fullName),
+      date_of_birth: identityFields.date_of_birth,
+      phone_number: identityFields.phone_number,
+      address_line1: identityFields.address_line1,
+      address_line2: identityFields.address_line2,
+      city: identityFields.city,
+      state: identityFields.state,
+      postal_code: identityFields.postal_code,
+      country: identityFields.country,
+    };
+  }
+
+  function applyPhoneVerificationSuccess(
+    body: ConfirmPhoneResponse | null,
+    phone: string,
+    fallbackSuccessMessage: string,
+  ) {
+    setPhoneVerified(Boolean(body?.phone_verified));
+    setPhoneVerifiedAt(body?.phone_verified_at ?? new Date().toISOString());
+    setSavedPhoneNumber(body?.phone_number ?? phone);
+    setIsPhoneUnlocked(false);
+    setIsPhoneOtpModalOpen(false);
+    setPhoneOtpError(null);
+    toast.success(body?.message ?? fallbackSuccessMessage);
+  }
+
+  function openPhoneOtpModal(isResend: boolean, retryAfterSeconds = 60) {
+    setIsPhoneOtpModalOpen(true);
+    setResendCooldownSeconds(retryAfterSeconds);
+    toast.success(
+      isResend
+        ? "OTP resent successfully."
+        : "OTP sent successfully. Enter the code to complete verification.",
+    );
+  }
+
+  function logPhoneOtpFailure(stage: string, status: number, code: string | undefined) {
+    console.warn("phone_otp_send_failed", {
+      stage,
+      status,
+      code: code ?? "unknown",
+    });
+  }
+
+  async function sendPhoneOtp(isResend: boolean) {
+    const targetPhone = normalizedSavedPhone;
+    if (!targetPhone) {
+      const message = "Please enter a valid phone number (e.g. +919876543210).";
+      setPhoneOtpError(message);
+      toast.error(message);
+      return;
+    }
+
+    const phoneValidationError = validatePhoneNumber(targetPhone);
+    if (phoneValidationError) {
+      setPhoneOtpError(phoneValidationError);
+      toast.error(phoneValidationError);
+      return;
+    }
+
+    setPhoneOtpError(null);
+    setError(null);
+
+    if (isResend) {
+      setIsResendingPhoneOtp(true);
+    } else {
+      setIsSendingPhoneOtp(true);
+    }
+
+    try {
+      const response = await fetch("/api/phone/send-otp", {
+        method: "POST",
+      });
+      let body: ConfirmPhoneResponse | null = null;
+      try {
+        body = (await response.json()) as ConfirmPhoneResponse;
+      } catch {
+        body = null;
+      }
+
+      if (!response.ok) {
+        if (response.status === 429 && typeof body?.retryAfterSeconds === "number") {
+          setResendCooldownSeconds(body.retryAfterSeconds);
+        }
+        logPhoneOtpFailure("send_otp_route_failed", response.status, body?.code);
+        const message = body?.message ?? "Unable to send OTP right now. Please try again.";
+        setPhoneOtpError(message);
+        toast.error(message);
+        return;
+      }
+
+      const retryAfterSeconds =
+        typeof body?.retryAfterSeconds === "number" ? body.retryAfterSeconds : 60;
+      openPhoneOtpModal(isResend, retryAfterSeconds);
+    } catch (caughtError) {
+      const message = getOtpRequestErrorMessage(caughtError);
+      setPhoneOtpError(message);
+      toast.error(message);
+    } finally {
+      setIsSendingPhoneOtp(false);
+      setIsResendingPhoneOtp(false);
+    }
+  }
+
+  async function handleVerifyPhoneClick() {
+    if (!canVerifyPhone || isBusy || isVerifyCooldownActive) {
+      return;
+    }
+
+    await sendPhoneOtp(false);
+  }
+
+  async function handleResendOtp() {
+    if (resendCooldownSeconds > 0 || isResendingPhoneOtp || !isPhoneOtpModalOpen) {
+      return;
+    }
+
+    await sendPhoneOtp(true);
+  }
+
+  async function handleConfirmOtp(otpCode: string) {
+    if (isVerifyingPhoneOtp) {
+      return;
+    }
+
+    if (!normalizedSavedPhone) {
+      const message = "Phone verification mismatch. Save and verify again.";
+      setPhoneOtpError(message);
+      toast.error(message);
+      return;
+    }
+
+    setPhoneOtpError(null);
+    setError(null);
+    setIsVerifyingPhoneOtp(true);
+
+    try {
+      const response = await fetch("/api/phone/verify-otp", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          phone: normalizedSavedPhone,
+          code: otpCode,
+        }),
+      });
+      let body: ConfirmPhoneResponse | null = null;
+      try {
+        body = (await response.json()) as ConfirmPhoneResponse;
+      } catch {
+        body = null;
+      }
+
+      if (!response.ok) {
+        const message = body?.message ?? "Invalid or expired OTP. Please try again.";
+        setPhoneOtpError(message);
+        toast.error(message);
+        return;
+      }
+
+      applyPhoneVerificationSuccess(
+        body,
+        normalizedSavedPhone,
+        "Phone number verified successfully.",
+      );
+    } catch (caughtError) {
+      const message = getOtpRequestErrorMessage(caughtError);
+      setPhoneOtpError(message);
+      toast.error(message);
+    } finally {
+      setIsVerifyingPhoneOtp(false);
+    }
+  }
+
+  function handleUnlockPhone() {
+    if (isIdentityLocked || !phoneVerified) {
+      return;
+    }
+
+    toast("Changing your phone number will require re-verification.", {
+      duration: 8000,
+      action: {
+        label: "Unlock",
+        onClick: () => {
+          setIsPhoneUnlocked(true);
+          setPhoneVerified(false);
+          setPhoneVerifiedAt(null);
+          setPhoneOtpError(null);
+          setIsPhoneOtpModalOpen(false);
+          setResendCooldownSeconds(0);
+          toast.success("Phone unlocked. Save changes and verify again.");
+        },
+      },
+      cancel: {
+        label: "Cancel",
+        onClick: () => undefined,
+      },
+    });
   }
 
   async function handleSave(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
-    if (saveInFlightRef.current || isSaving || isUploading) return;
+    if (saveInFlightRef.current || isBusy) return;
 
     setError(null);
-    setSuccess(null);
     saveInFlightRef.current = true;
     setIsSaving(true);
 
     try {
-      const supabase = createBrowserSupabaseClient();
-      const nameToSave = fullName.trim();
+      const payload = buildPayload();
+      const identityFields: IdentityFields = {
+        date_of_birth: payload.date_of_birth,
+        phone_number: payload.phone_number,
+        address_line1: payload.address_line1,
+        address_line2: payload.address_line2,
+        city: payload.city,
+        state: payload.state,
+        postal_code: payload.postal_code,
+        country: payload.country,
+      };
 
-      const { error: updateError } = await supabase
-        .from("profiles")
-        .update({
-          full_name: nameToSave.length > 0 ? nameToSave : null,
-        })
-        .eq("id", userId);
-
-      if (updateError) {
-        throw new Error(updateError.message);
+      const validationError = validateIdentityForSave(identityFields);
+      if (validationError) {
+        setError(validationError);
+        toast.error(validationError);
+        return;
       }
 
-      setSuccess("Profile updated successfully.");
+      const response = await fetch("/api/profile/update", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(payload),
+      });
+
+      let body:
+        | {
+            message?: string;
+            phone_number?: string | null;
+            phone_verified?: boolean;
+            phone_verified_at?: string | null;
+            phone_verification_reset?: boolean;
+          }
+        | null = null;
+      try {
+        body = (await response.json()) as {
+          message?: string;
+          phone_number?: string | null;
+          phone_verified?: boolean;
+          phone_verified_at?: string | null;
+          phone_verification_reset?: boolean;
+        };
+      } catch {
+        body = null;
+      }
+
+      if (!response.ok) {
+        const message = body?.message ?? "Unable to update profile right now. Please try again.";
+        setError(message);
+        toast.error(message);
+        return;
+      }
+
+      setFullName(payload.full_name ?? "");
+      setDateOfBirth(payload.date_of_birth ?? "");
+      setAddressLine1(payload.address_line1 ?? "");
+      setAddressLine2(payload.address_line2 ?? "");
+      setCity(payload.city ?? "");
+      setStateValue(payload.state ?? "");
+      setPostalCode(payload.postal_code ?? "");
+      setCountry(payload.country ?? "");
+      const refreshedPhone =
+        typeof body?.phone_number === "string" || body?.phone_number === null
+          ? body.phone_number
+          : payload.phone_number ?? null;
+      const verificationReset = Boolean(body?.phone_verification_reset);
+      const parsedRefreshedPhone = splitE164Phone(refreshedPhone ?? null);
+
+      setSavedPhoneNumber(refreshedPhone ?? "");
+      setPhoneCountryCode(parsedRefreshedPhone.countryCode);
+      setPhoneLocalNumber(parsedRefreshedPhone.localNumber);
+      if (typeof body?.phone_verified === "boolean") {
+        setPhoneVerified(body.phone_verified);
+      }
+      if (body && "phone_verified_at" in body) {
+        setPhoneVerifiedAt(body.phone_verified_at ?? null);
+      }
+      if (verificationReset) {
+        setIsPhoneUnlocked(true);
+        setIsPhoneOtpModalOpen(false);
+        setPhoneOtpError(null);
+        setResendCooldownSeconds(0);
+        toast.message("Phone changed. Re-verification is required before identity submission.");
+      } else {
+        setIsPhoneUnlocked(false);
+        toast.success(body?.message ?? "Profile updated successfully.");
+      }
     } catch (caughtError) {
-      setError(getErrorMessage(caughtError));
+      const message = getErrorMessage(caughtError);
+      setError(message);
+      toast.error(message);
     } finally {
       setIsSaving(false);
       saveInFlightRef.current = false;
@@ -207,21 +723,26 @@ export function ProfileForm({
     if (uploadInFlightRef.current || isUploading || isSaving) return;
 
     setError(null);
-    setSuccess(null);
 
     if (!ALLOWED_AVATAR_TYPES.has(file.type)) {
-      setError("Invalid file type. Please upload a JPG, PNG, or WEBP image.");
+      const message = "Invalid file type. Please upload a JPG, PNG, or WEBP image.";
+      setError(message);
+      toast.error(message);
       return;
     }
 
     if (file.size > MAX_AVATAR_BYTES) {
-      setError("File is too large. Maximum size is 2MB.");
+      const message = "File is too large. Maximum size is 2MB.";
+      setError(message);
+      toast.error(message);
       return;
     }
 
     const extension = getFileExtension(file.type);
     if (!extension) {
-      setError("Unsupported image format.");
+      const message = "Unsupported image format.";
+      setError(message);
+      toast.error(message);
       return;
     }
 
@@ -261,9 +782,11 @@ export function ProfileForm({
       }
 
       setAvatarUrl(publicUrl);
-      setSuccess("Profile photo updated successfully.");
+      toast.success("Profile photo updated successfully.");
     } catch (caughtError) {
-      setError(getErrorMessage(caughtError));
+      const message = getErrorMessage(caughtError);
+      setError(message);
+      toast.error(message);
     } finally {
       setIsUploading(false);
       uploadInFlightRef.current = false;
@@ -278,7 +801,16 @@ export function ProfileForm({
 
   async function handleVerificationSubmit() {
     if (!canSubmitVerification) {
-      setError("You cannot submit a document for verification in the current status.");
+      const message = "You cannot submit a document for verification in the current status.";
+      setError(message);
+      toast.error(message);
+      return;
+    }
+
+    if (!isPhoneReadyForIdentitySubmission) {
+      const message = "Phone number must be verified before identity submission.";
+      setError(message);
+      toast.error(message);
       return;
     }
 
@@ -288,23 +820,49 @@ export function ProfileForm({
 
     clearFeedback();
 
+    const identityFields = buildIdentityFields({
+      dateOfBirth,
+      phoneNumber: normalizedPhoneInput ?? "",
+      addressLine1,
+      addressLine2,
+      city,
+      state: stateValue,
+      postalCode,
+      country,
+    });
+
+    const identityValidationError = validateIdentityForVerification(identityFields);
+    if (identityValidationError) {
+      setError(identityValidationError);
+      toast.error(identityValidationError);
+      return;
+    }
+
     if (!verificationDocumentType || verificationDocumentType.trim().length === 0) {
-      setError("Please select a document type.");
+      const message = "Please select a document type.";
+      setError(message);
+      toast.error(message);
       return;
     }
 
     if (!verificationFile) {
-      setError("Please select a verification document to upload.");
+      const message = "Please select a verification document to upload.";
+      setError(message);
+      toast.error(message);
       return;
     }
 
     if (!ALLOWED_VERIFICATION_DOC_TYPES.has(verificationFile.type)) {
-      setError("Invalid document type. Please upload a JPG, PNG, or WEBP image.");
+      const message = "Invalid document type. Please upload a JPG, PNG, or WEBP image.";
+      setError(message);
+      toast.error(message);
       return;
     }
 
     if (verificationFile.size > MAX_VERIFICATION_DOC_BYTES) {
-      setError("Verification document exceeds 5MB limit.");
+      const message = "Verification document exceeds 5MB limit.";
+      setError(message);
+      toast.error(message);
       return;
     }
 
@@ -334,9 +892,13 @@ export function ProfileForm({
 
       if (!response.ok) {
         if (response.status === 401) {
-          setError("Your session expired. Please log in again.");
+          const message = "Your session expired. Please log in again.";
+          setError(message);
+          toast.error(message);
         } else {
-          setError(body?.message ?? "Unable to submit verification right now. Please try again.");
+          const message = body?.message ?? "Unable to submit verification right now. Please try again.";
+          setError(message);
+          toast.error(message);
         }
         return;
       }
@@ -347,9 +909,11 @@ export function ProfileForm({
       if (verificationFileInputRef.current) {
         verificationFileInputRef.current.value = "";
       }
-      setSuccess(body?.message ?? "Verification submitted. Your documents are under review.");
+      toast.success(body?.message ?? "Verification submitted. Your documents are under review.");
     } catch (caughtError) {
-      setError(getErrorMessage(caughtError));
+      const message = getErrorMessage(caughtError);
+      setError(message);
+      toast.error(message);
     } finally {
       setIsVerificationSubmitting(false);
       verificationInFlightRef.current = false;
@@ -357,10 +921,16 @@ export function ProfileForm({
   }
 
   return (
-    <form className="mt-6 space-y-6" onSubmit={handleSave}>
-      <section className="rounded-2xl border border-slate-200 bg-white p-5">
-        <h2 className="text-sm font-semibold uppercase tracking-[0.12em] text-slate-600">Profile</h2>
-        <div className="mt-4 flex flex-col gap-4 sm:flex-row sm:items-center">
+    <form className="mt-8 space-y-6" onSubmit={handleSave}>
+      <section className="rounded-3xl border border-slate-200/90 bg-white/90 p-6 shadow-[0_20px_55px_rgba(15,23,42,0.08)] backdrop-blur sm:p-7">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+          <div>
+            <h2 className="text-xl font-semibold tracking-tight text-slate-900">Profile</h2>
+            <p className="mt-1 text-sm text-slate-600">Manage your account details and verification.</p>
+          </div>
+          <IdentityStatusBadge status={verificationStatus} />
+        </div>
+        <div className="mt-5 flex flex-col gap-4 sm:flex-row sm:items-center">
           {avatarUrl ? (
             // eslint-disable-next-line @next/next/no-img-element
             <img
@@ -397,7 +967,9 @@ export function ProfileForm({
       </section>
 
       <section className="rounded-2xl border border-slate-200 bg-white p-5">
-        <h2 className="text-sm font-semibold uppercase tracking-[0.12em] text-slate-600">Personal Info</h2>
+        <h2 className="text-sm font-semibold uppercase tracking-[0.12em] text-slate-600">
+          Basic Information
+        </h2>
         <div className="mt-4 grid gap-4">
           <div>
             <label htmlFor="full-name" className="mb-2 block text-sm font-medium text-slate-700">
@@ -426,6 +998,212 @@ export function ProfileForm({
             />
           </div>
 
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div>
+              <label htmlFor="date-of-birth" className="mb-2 block text-sm font-medium text-slate-700">
+                Date of Birth
+              </label>
+              <input
+                id="date-of-birth"
+                type="date"
+                value={dateOfBirth}
+                disabled={isBusy || isIdentityLocked}
+                onChange={(event) => setDateOfBirth(event.target.value)}
+                className="w-full rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-slate-900 outline-none transition-colors duration-200 focus:border-emerald-400 focus:ring-2 focus:ring-emerald-200 disabled:cursor-not-allowed disabled:opacity-70"
+              />
+            </div>
+            <div className="sm:col-span-2 pt-1">
+              <p className="text-xs font-semibold uppercase tracking-[0.12em] text-slate-500">
+                Contact &amp; Phone Verification
+              </p>
+            </div>
+            <div className="sm:col-span-2">
+              <label htmlFor="phone-number" className="mb-2 block text-sm font-medium text-slate-700">
+                Phone Number
+              </label>
+              <div className="grid gap-2 sm:grid-cols-[220px_minmax(0,1fr)_auto] sm:items-end">
+                <CountryCombobox
+                  value={selectedCountryCode}
+                  disabled={isBusy || isPhoneLocked}
+                  onChange={(dialCode) => {
+                    setPhoneCountryCode(dialCode);
+                    setPhoneOtpError(null);
+                  }}
+                />
+                <div>
+                  <input
+                    id="phone-number"
+                    type="tel"
+                    inputMode="numeric"
+                    value={phoneLocalNumber}
+                    readOnly={isPhoneLocked}
+                    disabled={isBusy || isIdentityLocked}
+                    onChange={(event) => {
+                      setPhoneLocalNumber(normalizeLocalPhoneInput(event.target.value));
+                      setPhoneOtpError(null);
+                    }}
+                    placeholder={localPhonePlaceholder}
+                    className={`w-full rounded-xl border px-4 py-2.5 text-slate-900 outline-none transition-colors duration-200 ${
+                      isPhoneLocked
+                        ? "border-slate-200 bg-slate-50 text-slate-500"
+                        : "border-slate-300 bg-white focus:border-emerald-400 focus:ring-2 focus:ring-emerald-200"
+                    } disabled:cursor-not-allowed disabled:opacity-70`}
+                  />
+                  <p className="mt-1 text-xs text-slate-500">
+                    {selectedCountry.name} {selectedCountry.dialCode}
+                  </p>
+                </div>
+                <div className="pb-0.5 sm:justify-self-end">
+                  {canShowVerifyButton ? (
+                    <button
+                      ref={verifyButtonRef}
+                      type="button"
+                      onClick={handleVerifyPhoneClick}
+                      disabled={isBusy || isPhoneOtpModalOpen || isVerifyCooldownActive}
+                      className="inline-flex items-center justify-center rounded-xl border border-emerald-500 px-3 py-2 text-xs font-semibold text-emerald-700 transition-colors duration-200 hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-70"
+                    >
+                      {isSendingPhoneOtp ? "Sending OTP..." : "Verify"}
+                    </button>
+                  ) : null}
+                </div>
+              </div>
+              {isIdentityLocked ? (
+                <p className="mt-1 text-xs text-slate-500">
+                  Phone number is locked after identity verification.
+                </p>
+              ) : null}
+              {shouldShowPhoneSavedHint ? (
+                <p className="mt-1 text-xs text-amber-700">
+                  Save changes to verify this number.
+                </p>
+              ) : null}
+              {shouldShowPhoneValidationHint ? (
+                <p className="mt-1 text-xs text-amber-700">
+                  Save a valid number to enable verification (example: +919876543210).
+                </p>
+              ) : null}
+              {shouldShowPhoneVerifiedBadge ? (
+                <div className="mt-2 flex flex-wrap items-center gap-3">
+                  <span className="inline-flex items-center rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-800">
+                    Verified{phoneVerifiedAt ? ` on ${phoneVerifiedAtFormatted}` : ""}
+                  </span>
+                  {canShowPhoneChangeAction ? (
+                    <button
+                      type="button"
+                      onClick={handleUnlockPhone}
+                      className="text-xs font-medium text-slate-700 underline decoration-slate-300 underline-offset-4 hover:text-slate-900"
+                    >
+                      Change
+                    </button>
+                  ) : null}
+                </div>
+              ) : null}
+              {isVerifyCooldownActive && !isPhoneOtpModalOpen ? (
+                <p className="mt-2 text-xs text-amber-700">
+                  Wait {resendCooldownSeconds}s before requesting another OTP.
+                </p>
+              ) : null}
+              {shouldShowPhoneUnlockHint ? (
+                <p className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                  Phone is unlocked for editing. Save changes and verify again.
+                </p>
+              ) : null}
+              {!isPhoneOtpModalOpen && phoneOtpError ? (
+                <p className="mt-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-700">
+                  {phoneOtpError}
+                </p>
+              ) : null}
+            </div>
+          </div>
+
+          <div>
+            <label htmlFor="address-line1" className="mb-2 block text-sm font-medium text-slate-700">
+              Address Line 1
+            </label>
+            <input
+              id="address-line1"
+              type="text"
+              value={addressLine1}
+              disabled={isBusy || isIdentityLocked}
+              onChange={(event) => setAddressLine1(event.target.value)}
+              placeholder="Street address"
+              className="w-full rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-slate-900 outline-none transition-colors duration-200 focus:border-emerald-400 focus:ring-2 focus:ring-emerald-200 disabled:cursor-not-allowed disabled:opacity-70"
+            />
+          </div>
+
+          <div>
+            <label htmlFor="address-line2" className="mb-2 block text-sm font-medium text-slate-700">
+              Address Line 2 (Optional)
+            </label>
+            <input
+              id="address-line2"
+              type="text"
+              value={addressLine2}
+              disabled={isBusy || isIdentityLocked}
+              onChange={(event) => setAddressLine2(event.target.value)}
+              placeholder="Apartment, suite, unit, etc."
+              className="w-full rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-slate-900 outline-none transition-colors duration-200 focus:border-emerald-400 focus:ring-2 focus:ring-emerald-200 disabled:cursor-not-allowed disabled:opacity-70"
+            />
+          </div>
+
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div>
+              <label htmlFor="city" className="mb-2 block text-sm font-medium text-slate-700">
+                City
+              </label>
+              <input
+                id="city"
+                type="text"
+                value={city}
+                disabled={isBusy || isIdentityLocked}
+                onChange={(event) => setCity(event.target.value)}
+                className="w-full rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-slate-900 outline-none transition-colors duration-200 focus:border-emerald-400 focus:ring-2 focus:ring-emerald-200 disabled:cursor-not-allowed disabled:opacity-70"
+              />
+            </div>
+            <div>
+              <label htmlFor="state" className="mb-2 block text-sm font-medium text-slate-700">
+                State
+              </label>
+              <input
+                id="state"
+                type="text"
+                value={stateValue}
+                disabled={isBusy || isIdentityLocked}
+                onChange={(event) => setStateValue(event.target.value)}
+                className="w-full rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-slate-900 outline-none transition-colors duration-200 focus:border-emerald-400 focus:ring-2 focus:ring-emerald-200 disabled:cursor-not-allowed disabled:opacity-70"
+              />
+            </div>
+          </div>
+
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div>
+              <label htmlFor="postal-code" className="mb-2 block text-sm font-medium text-slate-700">
+                Postal Code
+              </label>
+              <input
+                id="postal-code"
+                type="text"
+                value={postalCode}
+                disabled={isBusy || isIdentityLocked}
+                onChange={(event) => setPostalCode(event.target.value)}
+                className="w-full rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-slate-900 outline-none transition-colors duration-200 focus:border-emerald-400 focus:ring-2 focus:ring-emerald-200 disabled:cursor-not-allowed disabled:opacity-70"
+              />
+            </div>
+            <div>
+              <label htmlFor="country" className="mb-2 block text-sm font-medium text-slate-700">
+                Country
+              </label>
+              <input
+                id="country"
+                type="text"
+                value={country}
+                disabled={isBusy || isIdentityLocked}
+                onChange={(event) => setCountry(event.target.value)}
+                className="w-full rounded-xl border border-slate-300 bg-white px-4 py-2.5 text-slate-900 outline-none transition-colors duration-200 focus:border-emerald-400 focus:ring-2 focus:ring-emerald-200 disabled:cursor-not-allowed disabled:opacity-70"
+              />
+            </div>
+          </div>
+
           <div>
             <p className="text-sm font-medium text-slate-700">Created At</p>
             <p className="mt-1 text-slate-900">{createdAt}</p>
@@ -435,18 +1213,12 @@ export function ProfileForm({
 
       <section className="rounded-2xl border border-slate-200 bg-white p-5">
         <h2 className="text-sm font-semibold uppercase tracking-[0.12em] text-slate-600">
-          User Verification
+          Identity Verification
         </h2>
-
-        {verificationStatus === "verified" ? (
-          <div className="mt-4 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-800">
-            Verified
-          </div>
-        ) : null}
 
         {verificationStatus === "pending" ? (
           <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-            Verification is under review. If admin did not receive the email, you can re-upload to retry.
+            Verification under review. Upload is disabled while pending.
             <div className="mt-1 text-xs text-amber-700">
               Submitted at: {verificationSubmittedAtFormatted}
             </div>
@@ -454,20 +1226,26 @@ export function ProfileForm({
         ) : null}
 
         {verificationStatus === "rejected" ? (
-          <div className="mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm font-semibold text-red-700">
-            Not Verified
+          <div className="mt-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+            Not Verified. You can upload a different document to retry verification.
           </div>
         ) : null}
 
         {verificationStatus === "resubmit_required" ? (
           <div className="mt-4 rounded-xl border border-orange-200 bg-orange-50 px-4 py-3 text-sm text-orange-800">
-            Please upload a different document.
+            Please re-upload a different document.
+          </div>
+        ) : null}
+
+        {canSubmitVerification && !isPhoneReadyForIdentitySubmission ? (
+          <div className="mt-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+            Phone number must be verified before identity submission.
           </div>
         ) : null}
 
         {(verificationStatus === "not_submitted" ||
-          verificationStatus === "pending" ||
-          verificationStatus === "resubmit_required") && (
+          verificationStatus === "resubmit_required" ||
+          verificationStatus === "rejected") && (
           <div className="mt-4 grid gap-4">
             <div>
               <label
@@ -479,7 +1257,7 @@ export function ProfileForm({
               <select
                 id="verification-document-type"
                 value={verificationDocumentType}
-                disabled={!canSubmitVerification || isBusy}
+                disabled={!canSubmitVerificationNow || isBusy}
                 onChange={(event) => {
                   setVerificationDocumentType(event.target.value);
                   clearFeedback();
@@ -506,7 +1284,7 @@ export function ProfileForm({
                 id="verification-document-file"
                 type="file"
                 accept="image/jpeg,image/png,image/webp"
-                disabled={!canSubmitVerification || isBusy}
+                disabled={!canSubmitVerificationNow || isBusy}
                 onChange={handleVerificationFileChange}
                 className="block w-full cursor-pointer rounded-xl border border-slate-300 bg-white px-3 py-2.5 text-sm text-slate-700 file:mr-3 file:rounded-lg file:border-0 file:bg-emerald-100 file:px-3 file:py-1.5 file:font-semibold file:text-emerald-800 hover:file:bg-emerald-200 disabled:cursor-not-allowed disabled:opacity-70"
               />
@@ -516,8 +1294,8 @@ export function ProfileForm({
             <button
               type="button"
               onClick={handleVerificationSubmit}
-              disabled={!canSubmitVerification || isBusy || !verificationFile}
-              className="inline-flex items-center justify-center rounded-xl border border-sky-500 bg-gradient-to-r from-sky-500 to-blue-500 px-4 py-2.5 text-sm font-semibold text-white transition-all duration-200 hover:from-sky-400 hover:to-blue-400 disabled:cursor-not-allowed disabled:opacity-70"
+              disabled={!canSubmitVerificationNow || isBusy || !verificationFile}
+              className="inline-flex items-center justify-center rounded-xl border border-sky-500 bg-linear-to-r from-sky-500 to-blue-500 px-4 py-2.5 text-sm font-semibold text-white transition-all duration-200 hover:from-sky-400 hover:to-blue-400 disabled:cursor-not-allowed disabled:opacity-70"
             >
               {getVerificationButtonLabel(verificationStatus, isVerificationSubmitting)}
             </button>
@@ -542,10 +1320,26 @@ export function ProfileForm({
           >
             Change Password
           </Link>
-
-          <LogoutButton className="inline-flex items-center justify-center rounded-xl border border-red-300 px-4 py-2.5 text-sm font-semibold text-red-700 transition-colors duration-200 hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-70" />
         </div>
       </section>
+
+      <PhoneOtpModal
+        key={`${normalizedSavedPhone ?? ""}-${isPhoneOtpModalOpen ? "open" : "closed"}`}
+        isOpen={isPhoneOtpModalOpen}
+        phone={normalizedSavedPhone ?? ""}
+        isSubmitting={isVerifyingPhoneOtp}
+        isResending={isResendingPhoneOtp}
+        resendCooldownSeconds={resendCooldownSeconds}
+        errorMessage={phoneOtpError}
+        onClose={() => {
+          if (isVerifyingPhoneOtp) return;
+          setIsPhoneOtpModalOpen(false);
+          setPhoneOtpError(null);
+          window.requestAnimationFrame(() => verifyButtonRef.current?.focus());
+        }}
+        onSubmit={handleConfirmOtp}
+        onResend={handleResendOtp}
+      />
 
       {error ? (
         <p
@@ -556,14 +1350,6 @@ export function ProfileForm({
         </p>
       ) : null}
 
-      {success ? (
-        <p
-          aria-live="polite"
-          className="rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-sm text-emerald-800"
-        >
-          {success}
-        </p>
-      ) : null}
     </form>
   );
 }

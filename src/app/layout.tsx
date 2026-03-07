@@ -1,9 +1,10 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import "./globals.css";
 import { Analytics } from "@vercel/analytics/next";
 import { ZeroCarbonFooter } from "@/components/ui/zerocarbon-footer";
 import { ZeroCarbonNavbar } from "@/components/ui/zerocarbon-navbar";
 import { GlobalTilesBackground } from "@/components/ui/global-tiles-background";
+import { Toaster } from "sonner";
 
 export const metadata: Metadata = {
   metadataBase: new URL("https://zerocarbonworld.vercel.app"),
@@ -54,7 +55,6 @@ export const metadata: Metadata = {
       "A transparent platform to buy, sell, and retire verified carbon credits.",
     images: ["/og-image.png"],
   },
-  themeColor: "#0f172a",
   icons: {
     icon: [
       { url: "/favicon/favicon.ico" },
@@ -65,6 +65,10 @@ export const metadata: Metadata = {
     apple: "/favicon/apple-touch-icon.png",
     other: [{ rel: "manifest", url: "/favicon/site.webmanifest" }],
   },
+};
+
+export const viewport: Viewport = {
+  themeColor: "#0f172a",
 };
 
 export default function RootLayout({
@@ -79,6 +83,7 @@ export default function RootLayout({
         <ZeroCarbonNavbar />
         <div className="relative z-10 min-h-screen pt-24 md:pt-28">{children}</div>
         <ZeroCarbonFooter />
+        <Toaster position="top-right" richColors closeButton />
         <Analytics />
       </body>
     </html>
