@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 import "./globals.css";
+import { Analytics } from "@vercel/analytics/next";
 import { ZeroCarbonFooter } from "@/components/ui/zerocarbon-footer";
 import { ZeroCarbonNavbar } from "@/components/ui/zerocarbon-navbar";
 import { GlobalTilesBackground } from "@/components/ui/global-tiles-background";
@@ -83,6 +84,7 @@ export default function RootLayout({
         <div className="relative z-10 min-h-screen pt-24 md:pt-28">{children}</div>
         <ZeroCarbonFooter />
         <Toaster position="top-right" richColors closeButton />
+        <Analytics />
       </body>
     </html>
   );
