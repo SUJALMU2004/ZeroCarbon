@@ -4,18 +4,23 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { ArrowLeftRight, Building2, Globe2, Home, User } from "lucide-react";
 
-interface MobileBottomBarProps {
-  currentMode: "buyer" | "seller";
-}
-
-export default function MobileBottomBar({
-  currentMode,
-}: MobileBottomBarProps) {
+export default function MobileBottomBar() {
   const pathname = usePathname();
   const router = useRouter();
 
+  const currentMode: "buyer" | "seller" = pathname.includes("/dashboard/seller")
+    ? "seller"
+    : "buyer";
+
   const homeRoute =
     currentMode === "buyer" ? "/dashboard/buyer" : "/dashboard/seller";
+
+  const handleToggle = () => {
+    const destination =
+      currentMode === "buyer" ? "/dashboard/seller" : "/dashboard/buyer";
+
+    router.push(destination);
+  };
 
   return (
     <nav
@@ -27,9 +32,7 @@ export default function MobileBottomBar({
       <Link
         href={homeRoute}
         className={`flex flex-1 min-w-0 flex-col items-center justify-center gap-0.5 transition-colors ${
-          pathname.startsWith("/dashboard")
-            ? "text-green-600"
-            : "text-gray-400"
+          pathname.startsWith("/dashboard") ? "text-green-600" : "text-gray-400"
         }`}
       >
         <Home className="h-5 w-5" />
@@ -48,28 +51,27 @@ export default function MobileBottomBar({
 
       <div className="relative flex flex-1 min-w-0 flex-col items-center justify-center">
         <button
-          onClick={() =>
-            router.push(
-              currentMode === "buyer" ? "/dashboard/seller" : "/dashboard/buyer",
-            )
-          }
-          className="mt-[-1.25rem] flex h-14 w-14 items-center justify-center rounded-full border-4 border-white bg-green-600 shadow-lg shadow-green-200 transition-transform active:scale-95"
-          aria-label="Switch mode"
           type="button"
+          onClick={handleToggle}
+          className="mt-[-1.25rem] flex h-14 w-14 items-center justify-center rounded-full border-4 border-white bg-green-600 shadow-lg shadow-green-200 transition-transform active:scale-95"
+          aria-label={`Switch to ${currentMode === "buyer" ? "seller" : "buyer"} mode`}
         >
-          <ArrowLeftRight className="h-5 w-5 text-white" />
+          <ArrowLeftRight
+            className="h-5 w-5 text-white transition-transform duration-300 ease-in-out"
+            style={{
+              transform: currentMode === "seller" ? "rotate(180deg)" : "rotate(0deg)",
+            }}
+          />
         </button>
-        <span className="mt-0.5 text-[10px] font-semibold leading-none text-green-600">
-          {currentMode === "buyer" ? "Buyer" : "Seller"}
+        <span className="mt-0.5 capitalize text-[10px] font-semibold leading-none text-green-600">
+          {currentMode}
         </span>
       </div>
 
       <Link
         href="/verify-company"
         className={`flex flex-1 min-w-0 flex-col items-center justify-center gap-0.5 transition-colors ${
-          pathname.startsWith("/verify-company")
-            ? "text-green-600"
-            : "text-gray-400"
+          pathname.startsWith("/verify-company") ? "text-green-600" : "text-gray-400"
         }`}
       >
         <Building2 className="h-5 w-5" />
