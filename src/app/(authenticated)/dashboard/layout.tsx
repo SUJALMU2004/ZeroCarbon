@@ -1,6 +1,5 @@
 import { redirect } from "next/navigation";
 import { DashboardSidebar } from "@/components/dashboard/DashboardSidebar";
-import { MobileBottomBar } from "@/components/dashboard/MobileBottomBar";
 import { VerificationBanner } from "@/components/dashboard/verification-banner";
 import { getVerificationBannerModel, normalizeVerificationState } from "@/lib/dashboard/verification-banner";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
@@ -102,13 +101,11 @@ export default async function DashboardLayout({
             </div>
           ) : null}
 
-          <main className="flex-1 p-4 md:p-6 pb-24 md:pb-6 overflow-y-auto">
+          <main className="flex-1 overflow-y-auto p-4 md:p-6">
             {children}
           </main>
         </div>
       </div>
-
-      <MobileBottomBar />
     </div>
   );
 }

@@ -1,7 +1,7 @@
-﻿import Link from "next/link";
+import Link from "next/link";
 import { redirect } from "next/navigation";
 import { Building2, CheckCircle2, ChevronLeft, Clock } from "lucide-react";
-import { CompanyVerifyForm } from "@/app/verify-company/CompanyVerifyForm";
+import { CompanyVerifyForm } from "@/app/(authenticated)/verify-company/CompanyVerifyForm";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import type { IdentityStatus } from "@/types/dashboard";
 
@@ -212,4 +212,5 @@ export default async function VerifyCompanyPage() {
     </div>
   );
 }
+
 

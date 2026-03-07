@@ -326,14 +326,14 @@ export function ZeroCarbonNavbar(): JSX.Element {
                   <Link
                     href="/profile"
                     onClick={() => setIsMenuOpen(false)}
-                    className="rounded-lg px-3 py-2 text-sm font-medium text-slate-800 transition-colors duration-200 hover:bg-white/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400 focus-visible:ring-offset-2"
+                    className="hidden rounded-lg px-3 py-2 text-sm font-medium text-slate-800 transition-colors duration-200 hover:bg-white/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400 focus-visible:ring-offset-2 md:block"
                   >
                     Profile
                   </Link>
                   <Link
                     href="/dashboard"
                     onClick={() => setIsMenuOpen(false)}
-                    className="rounded-lg px-3 py-2 text-sm font-medium text-slate-800 transition-colors duration-200 hover:bg-white/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400 focus-visible:ring-offset-2"
+                    className="hidden rounded-lg px-3 py-2 text-sm font-medium text-slate-800 transition-colors duration-200 hover:bg-white/20 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400 focus-visible:ring-offset-2 md:block"
                   >
                     Dashboard
                   </Link>

@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
 import { ChevronLeft, FileText, TreePine } from "lucide-react";
-import { ProjectVerifyForm } from "@/app/verify-project/ProjectVerifyForm";
+import { ProjectVerifyForm } from "@/app/(authenticated)/verify-project/ProjectVerifyForm";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
 import type { IdentityStatus } from "@/types/dashboard";
 
@@ -147,3 +147,4 @@ export default async function VerifyProjectPage() {
     </div>
   );
 }
+
