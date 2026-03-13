@@ -22,7 +22,11 @@ function getProjectId(): string {
 }
 
 function getDataset(): string {
-  return process.env.GEE_DEFAULT_DATASET ?? "COPERNICUS/S2_SR";
+  const configured = process.env.GEE_DEFAULT_DATASET?.trim();
+  if (!configured || configured === "COPERNICUS/S2_SR") {
+    return "COPERNICUS/S2_SR_HARMONIZED";
+  }
+  return configured;
 }
 
 function isValidCoordinate(latitude: number, longitude: number): boolean {
@@ -53,26 +57,17 @@ function buildRgbExpression(params: {
           arguments: {
             image: {
               functionInvocationValue: {
-                functionName: "ImageCollection.median",
+                functionName: "ImageCollection.reduce",
                 arguments: {
                   collection: {
                     functionInvocationValue: {
-                      functionName: "ImageCollection.filter",
+                      functionName: "Collection.filter",
                       arguments: {
                         collection: {
                           functionInvocationValue: {
-                            functionName: "ImageCollection.filterDate",
+                            functionName: "ImageCollection.load",
                             arguments: {
-                              collection: {
-                                functionInvocationValue: {
-                                  functionName: "ImageCollection.load",
-                                  arguments: {
-                                    id: { constantValue: dataset },
-                                  },
-                                },
-                              },
-                              start: { constantValue: `${start.toISOString().slice(0, 10)}T00:00:00Z` },
-                              end: { constantValue: `${now.toISOString().slice(0, 10)}T23:59:59Z` },
+                              id: { constantValue: dataset },
                             },
                           },
                         },
@@ -85,6 +80,27 @@ function buildRgbExpression(params: {
                                   values: [
                                     {
                                       functionInvocationValue: {
+                                        functionName: "Filter.dateRangeContains",
+                                        arguments: {
+                                          leftValue: {
+                                            functionInvocationValue: {
+                                              functionName: "DateRange",
+                                              arguments: {
+                                                start: {
+                                                  constantValue: `${start.toISOString().slice(0, 10)}T00:00:00Z`,
+                                                },
+                                                end: {
+                                                  constantValue: `${now.toISOString().slice(0, 10)}T23:59:59Z`,
+                                                },
+                                              },
+                                            },
+                                          },
+                                          rightField: { constantValue: "system:time_start" },
+                                        },
+                                      },
+                                    },
+                                    {
+                                      functionInvocationValue: {
                                         functionName: "Filter.lessThan",
                                         arguments: {
                                           leftField: { constantValue: "CLOUDY_PIXEL_PERCENTAGE" },
@@ -94,15 +110,16 @@ function buildRgbExpression(params: {
                                     },
                                     {
                                       functionInvocationValue: {
-                                        functionName: "Filter.bounds",
+                                        functionName: "Filter.intersects",
                                         arguments: {
-                                          geometry: {
+                                          leftField: { constantValue: ".geo" },
+                                          rightValue: {
                                             functionInvocationValue: {
                                               functionName: "Geometry.buffer",
                                               arguments: {
                                                 geometry: {
                                                   functionInvocationValue: {
-                                                    functionName: "Geometry.Point",
+                                                    functionName: "GeometryConstructors.Point",
                                                     arguments: {
                                                       coordinates: {
                                                         arrayValue: {
@@ -131,15 +148,22 @@ function buildRgbExpression(params: {
                       },
                     },
                   },
+                  reducer: {
+                    functionInvocationValue: {
+                      functionName: "Reducer.median",
+                      arguments: {},
+                    },
+                  },
+                  parallelScale: { constantValue: 2 },
                 },
               },
             },
             bands: {
               arrayValue: {
                 values: [
-                  { constantValue: "B4" },
-                  { constantValue: "B3" },
-                  { constantValue: "B2" },
+                  { constantValue: "B4_median" },
+                  { constantValue: "B3_median" },
+                  { constantValue: "B2_median" },
                 ],
               },
             },
@@ -186,7 +210,15 @@ async function requestThumbnail(params: {
 
   const raw = (await response.json().catch(() => ({}))) as Record<string, unknown>;
   if (!response.ok) {
-    throw new Error(`GEE thumbnail request failed (${response.status})`);
+    const details =
+      typeof (raw.error as { message?: unknown })?.message === "string"
+        ? (raw.error as { message: string }).message
+        : "";
+    throw new Error(
+      details.length > 0
+        ? `GEE thumbnail request failed (${response.status}): ${details}`
+        : `GEE thumbnail request failed (${response.status})`,
+    );
   }
 
   const name = typeof raw.name === "string" ? raw.name : null;

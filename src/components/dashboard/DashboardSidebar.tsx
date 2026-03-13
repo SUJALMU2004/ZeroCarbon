@@ -14,7 +14,6 @@ import {
   Flame,
   Globe2,
   LayoutDashboard,
-  TreePine,
 } from "lucide-react";
 import type { IdentityStatus } from "@/types/dashboard";
 
@@ -38,14 +37,14 @@ type NavItem = {
 const buyerLinks: NavItem[] = [
   { label: "Overview", href: "/dashboard/buyer", icon: LayoutDashboard },
   { label: "Satellite Map", href: "/projects/map", icon: Globe2 },
-  { label: "Emissions", href: "/dashboard/buyer/emissions", icon: Flame, placeholder: true },
+  { label: "Emissions", href: "/dashboard/buyer/emissions", icon: Flame },
   { label: "Portfolio", href: "/dashboard/buyer/portfolio", icon: Briefcase, placeholder: true },
   { label: "Registry", href: "/dashboard/buyer/registry", icon: BookOpen, placeholder: true },
 ];
 
 const sellerLinks: NavItem[] = [
   { label: "Overview", href: "/dashboard/seller", icon: LayoutDashboard },
-  { label: "My Projects", href: "/dashboard/seller/projects", icon: TreePine, placeholder: true },
+  { label: "Satellite Map", href: "/projects/map", icon: Globe2 },
   { label: "Analytics", href: "/dashboard/seller/analytics", icon: BarChart2, placeholder: true },
   { label: "Registry", href: "/dashboard/seller/registry", icon: BookOpen, placeholder: true },
 ];
@@ -239,16 +238,7 @@ export function DashboardSidebar({
               </button>
             </div>
           )
-        ) : (
-          <button
-            type="button"
-            onClick={() => router.push("/verify-project")}
-            className="flex w-full items-center justify-center gap-2 rounded-xl bg-green-600 px-4 py-2.5 text-sm font-semibold text-white transition-all duration-200 hover:bg-green-700"
-          >
-            <TreePine className="h-4 w-4" />
-            <span>Verify Your Project</span>
-          </button>
-        )}
+        ) : null}
       </div>
     </motion.aside>
   );

@@ -1,6 +1,8 @@
 import { NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
+import { createServiceSupabaseClient } from "@/lib/supabase/service";
 import type { IdentityStatus } from "@/types/dashboard";
+import { parseNumeric } from "@/lib/payments/orders";
 
 type ProjectRow = {
   id: string;
@@ -37,6 +39,7 @@ function buildDefaultResponse(errorState: boolean) {
     stats: {
       credits_issued: 0,
       credits_sold: 0,
+      revenue_earned_inr: 0,
       revenue_earned_usd: 0,
     },
   };
@@ -76,6 +79,37 @@ export async function GET() {
     const rejectedCount = typedProjects.filter((project) => project.status === "rejected").length;
     const latestProject = typedProjects[0] ?? null;
 
+    const service = createServiceSupabaseClient();
+    const { data: capturedSalesData, error: capturedSalesError } = await service
+      .from("project_credit_orders")
+      .select("quantity, total_amount_inr")
+      .eq("seller_user_id", user.id)
+      .eq("status", "captured");
+
+    let creditsSold = 0;
+    let revenueEarnedInr = 0;
+
+    if (capturedSalesError) {
+      console.error("seller_stats_sales_query_failed", {
+        userId: user.id,
+        reason: capturedSalesError.message,
+      });
+    } else {
+      const salesRows = (capturedSalesData ?? []) as Array<{
+        quantity: number | null;
+        total_amount_inr: number | string | null;
+      }>;
+
+      creditsSold = salesRows.reduce((sum, row) => {
+        const quantity = parseNumeric(row.quantity ?? 0);
+        return sum + Math.max(0, Math.floor(quantity));
+      }, 0);
+
+      revenueEarnedInr = salesRows.reduce((sum, row) => {
+        return sum + parseNumeric(row.total_amount_inr ?? 0);
+      }, 0);
+    }
+
     return NextResponse.json(
       {
         _error: false,
@@ -94,7 +128,8 @@ export async function GET() {
         },
         stats: {
           credits_issued: 0,
-          credits_sold: 0,
+          credits_sold: creditsSold,
+          revenue_earned_inr: revenueEarnedInr,
           revenue_earned_usd: 0,
         },
       },

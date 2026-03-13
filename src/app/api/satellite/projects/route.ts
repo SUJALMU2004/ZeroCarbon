@@ -81,7 +81,9 @@ export async function GET() {
 
     const projects = (projectsData ?? []).map((project) => ({
       ...project,
-      price_per_credit: null,
+      project_image_url: null,
+      price_per_credit_inr: null,
+      remaining_credits: null,
     }));
 
     return NextResponse.json({ projects }, { status: 200 });
