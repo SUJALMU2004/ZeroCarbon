@@ -9,7 +9,13 @@ type ProjectStatus =
   | "rejected"
   | "resubmit_required";
 
-type ProjectType = "forestry" | "solar" | "methane" | "other";
+type ProjectType =
+  | "forestry"
+  | "agricultural"
+  | "solar"
+  | "methane"
+  | "windmill"
+  | "other";
 
 type ProjectRow = {
   id: string;
@@ -20,6 +26,7 @@ type ProjectRow = {
   latitude: number | null;
   longitude: number | null;
   land_area_hectares: number | null;
+  review_notes: string | null;
   admin_token: string | null;
   admin_token_expires_at: string | null;
 };
@@ -105,7 +112,7 @@ async function lookupProjectByToken(token: string): Promise<ProjectRow | null> {
   const { data, error } = await serviceClient
     .from("carbon_projects")
     .select(
-      "id, user_id, status, project_name, project_type, latitude, longitude, land_area_hectares, admin_token, admin_token_expires_at",
+      "id, user_id, status, project_name, project_type, latitude, longitude, land_area_hectares, review_notes, admin_token, admin_token_expires_at",
     )
     .eq("admin_token", token)
     .maybeSingle();
@@ -118,6 +125,32 @@ async function lookupProjectByToken(token: string): Promise<ProjectRow | null> {
   }
 
   return (data ?? null) as ProjectRow | null;
+}
+
+function mergeRejectionReasonIntoReviewNotes(
+  rawReviewNotes: string | null,
+  rejectionReason: string,
+): string {
+  if (!rawReviewNotes) return rejectionReason;
+
+  try {
+    const parsed = JSON.parse(rawReviewNotes) as Record<string, unknown>;
+    const submissionMetadata =
+      parsed.submission_metadata &&
+      typeof parsed.submission_metadata === "object"
+        ? (parsed.submission_metadata as Record<string, unknown>)
+        : {};
+
+    return JSON.stringify({
+      ...parsed,
+      submission_metadata: {
+        ...submissionMetadata,
+        rejection_reason: rejectionReason,
+      },
+    });
+  } catch {
+    return rejectionReason;
+  }
 }
 
 function isTokenExpired(expiresAt: string | null): boolean {
@@ -194,7 +227,15 @@ async function triggerSatelliteAnalysis(params: {
     });
 
     if (!response.ok) {
-      throw new Error(`Satellite API returned ${response.status}`);
+      const body = (await response.json().catch(() => ({}))) as {
+        error?: string;
+      };
+      const details = body.error?.trim();
+      throw new Error(
+        details && details.length > 0
+          ? `Satellite API returned ${response.status}: ${details}`
+          : `Satellite API returned ${response.status}`,
+      );
     }
   } catch (error) {
     console.error("satellite_trigger_failed", {
@@ -268,7 +309,6 @@ export async function GET(request: NextRequest) {
         status: "verified",
         reviewed_at: nowIso,
         satellite_status: "processing",
-        review_notes: null,
         admin_token: null,
         admin_token_expires_at: null,
       })
@@ -404,6 +444,10 @@ export async function POST(request: NextRequest) {
   }
 
   const clippedReason = sanitizedReason.slice(0, 500);
+  const nextReviewNotes = mergeRejectionReasonIntoReviewNotes(
+    project.review_notes,
+    clippedReason,
+  );
   const serviceClient = createServiceSupabaseClient();
   const nowIso = new Date().toISOString();
 
@@ -411,7 +455,7 @@ export async function POST(request: NextRequest) {
     .from("carbon_projects")
     .update({
       status: "rejected",
-      review_notes: clippedReason,
+      review_notes: nextReviewNotes,
       reviewed_at: nowIso,
       admin_token: null,
       admin_token_expires_at: null,

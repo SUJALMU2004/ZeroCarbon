@@ -31,7 +31,11 @@ function getProjectId(): string {
 }
 
 function getDataset(): string {
-  return process.env.GEE_DEFAULT_DATASET ?? "COPERNICUS/S2_SR";
+  const configured = process.env.GEE_DEFAULT_DATASET?.trim();
+  if (!configured || configured === "COPERNICUS/S2_SR") {
+    return "COPERNICUS/S2_SR_HARMONIZED";
+  }
+  return configured;
 }
 
 function getRedBand(): string {
@@ -97,28 +101,19 @@ function buildNdviComputeExpression(params: {
               functionInvocationValue: {
                 functionName: "Image.normalizedDifference",
                 arguments: {
-                  image: {
+                  input: {
                     functionInvocationValue: {
-                      functionName: "ImageCollection.median",
+                      functionName: "ImageCollection.reduce",
                       arguments: {
                         collection: {
                           functionInvocationValue: {
-                            functionName: "ImageCollection.filter",
+                            functionName: "Collection.filter",
                             arguments: {
                               collection: {
                                 functionInvocationValue: {
-                                  functionName: "ImageCollection.filterDate",
+                                  functionName: "ImageCollection.load",
                                   arguments: {
-                                    collection: {
-                                      functionInvocationValue: {
-                                        functionName: "ImageCollection.load",
-                                        arguments: {
-                                          id: { constantValue: dataset },
-                                        },
-                                      },
-                                    },
-                                    start: { constantValue: `${params.start}T00:00:00Z` },
-                                    end: { constantValue: `${params.end}T23:59:59Z` },
+                                    id: { constantValue: dataset },
                                   },
                                 },
                               },
@@ -129,6 +124,29 @@ function buildNdviComputeExpression(params: {
                                     filters: {
                                       arrayValue: {
                                         values: [
+                                          {
+                                            functionInvocationValue: {
+                                              functionName: "Filter.dateRangeContains",
+                                              arguments: {
+                                                leftValue: {
+                                                  functionInvocationValue: {
+                                                    functionName: "DateRange",
+                                                    arguments: {
+                                                      start: {
+                                                        constantValue: `${params.start}T00:00:00Z`,
+                                                      },
+                                                      end: {
+                                                        constantValue: `${params.end}T23:59:59Z`,
+                                                      },
+                                                    },
+                                                  },
+                                                },
+                                                rightField: {
+                                                  constantValue: "system:time_start",
+                                                },
+                                              },
+                                            },
+                                          },
                                           {
                                             functionInvocationValue: {
                                               functionName: "Filter.lessThan",
@@ -144,15 +162,18 @@ function buildNdviComputeExpression(params: {
                                           },
                                           {
                                             functionInvocationValue: {
-                                              functionName: "Filter.bounds",
+                                              functionName: "Filter.intersects",
                                               arguments: {
-                                                geometry: {
+                                                leftField: {
+                                                  constantValue: ".geo",
+                                                },
+                                                rightValue: {
                                                   functionInvocationValue: {
                                                     functionName: "Geometry.buffer",
                                                     arguments: {
                                                       geometry: {
                                                         functionInvocationValue: {
-                                                          functionName: "Geometry.Point",
+                                                          functionName: "GeometryConstructors.Point",
                                                           arguments: {
                                                             coordinates: {
                                                               arrayValue: {
@@ -183,12 +204,22 @@ function buildNdviComputeExpression(params: {
                             },
                           },
                         },
+                        reducer: {
+                          functionInvocationValue: {
+                            functionName: "Reducer.median",
+                            arguments: {},
+                          },
+                        },
+                        parallelScale: { constantValue: 2 },
                       },
                     },
                   },
                   bandNames: {
                     arrayValue: {
-                      values: [{ constantValue: nirBand }, { constantValue: redBand }],
+                      values: [
+                        { constantValue: `${nirBand}_median` },
+                        { constantValue: `${redBand}_median` },
+                      ],
                     },
                   },
                 },
@@ -200,16 +231,16 @@ function buildNdviComputeExpression(params: {
                 arguments: {},
               },
             },
-            geometry: {
-              functionInvocationValue: {
-                functionName: "Geometry.buffer",
-                arguments: {
                   geometry: {
                     functionInvocationValue: {
-                      functionName: "Geometry.Point",
+                      functionName: "Geometry.buffer",
                       arguments: {
-                        coordinates: {
-                          arrayValue: {
+                        geometry: {
+                          functionInvocationValue: {
+                            functionName: "GeometryConstructors.Point",
+                            arguments: {
+                              coordinates: {
+                                arrayValue: {
                             values: [
                               { constantValue: params.longitude },
                               { constantValue: params.latitude },
@@ -295,7 +326,15 @@ async function computeWindowNdvi(params: {
     const raw = (await response.json().catch(() => ({}))) as Record<string, unknown>;
 
     if (!response.ok) {
-      throw new Error(`GEE NDVI compute failed (${response.status})`);
+      const details =
+        typeof (raw.error as { message?: unknown })?.message === "string"
+          ? (raw.error as { message: string }).message
+          : "";
+      throw new Error(
+        details.length > 0
+          ? `GEE NDVI compute failed (${response.status}): ${details}`
+          : `GEE NDVI compute failed (${response.status})`,
+      );
     }
 
     const result = raw.result ?? raw.value ?? raw;
@@ -379,7 +418,22 @@ export async function runForestryNdviAnalysis(params: {
 
   const successfulWindows = Object.values(results).filter((value) => value !== null);
   if (successfulWindows.length === 0) {
-    throw new Error("All NDVI windows failed");
+    const windowErrors = entries
+      .map(([key]) => {
+        const windowPayload = (rawResponse.windows as Record<string, unknown>)[key] as
+          | Record<string, unknown>
+          | undefined;
+        const message =
+          typeof windowPayload?.error === "string" ? windowPayload.error : null;
+        return message ? `${key}: ${message}` : null;
+      })
+      .filter((message): message is string => Boolean(message));
+
+    throw new Error(
+      windowErrors.length > 0
+        ? `All NDVI windows failed. ${windowErrors.join(" | ")}`
+        : "All NDVI windows failed",
+    );
   }
 
   const trend = calculateTrend({

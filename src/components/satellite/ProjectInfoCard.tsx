@@ -1,202 +1,188 @@
 "use client";
 
-import { useMemo } from "react";
-import type { CSSProperties } from "react";
+import type { CSSProperties, MouseEventHandler } from "react";
+import Link from "next/link";
+import Image from "next/image";
 import type { ProjectSatelliteData } from "@/types/satellite";
 
 interface ProjectInfoCardProps {
   project: ProjectSatelliteData;
+  onMouseEnter?: MouseEventHandler<HTMLDivElement>;
+  onMouseLeave?: MouseEventHandler<HTMLDivElement>;
 }
 
-function getProjectTypeBadgeStyle(projectType: string): CSSProperties {
+function getProjectTypeLabel(projectType: ProjectSatelliteData["project_type"]): string {
   switch (projectType) {
     case "forestry":
-      return { background: "#dcfce7", color: "#16a34a" };
+      return "Forestry";
+    case "agricultural":
+      return "Agriculture";
     case "solar":
-      return { background: "#fef9c3", color: "#ca8a04" };
+      return "Solar Farm";
     case "methane":
-      return { background: "#dbeafe", color: "#1d4ed8" };
+      return "Methane Capture";
+    case "windmill":
+      return "Wind Mills";
     default:
-      return { background: "#f3f4f6", color: "#6b7280" };
+      return "Project";
   }
 }
 
-function getConfidenceStyle(badge: string | null): CSSProperties {
-  if (badge === "High") return { background: "#dcfce7", color: "#16a34a" };
-  if (badge === "Medium") return { background: "#fef9c3", color: "#ca8a04" };
-  return { background: "#fee2e2", color: "#dc2626" };
+function getProjectTypeBadgeStyle(projectType: ProjectSatelliteData["project_type"]): CSSProperties {
+  switch (projectType) {
+    case "forestry":
+      return { background: "#dcfce7", color: "#166534" };
+    case "agricultural":
+      return { background: "#fef3c7", color: "#92400e" };
+    case "solar":
+      return { background: "#fef9c3", color: "#854d0e" };
+    case "methane":
+      return { background: "#dbeafe", color: "#1e40af" };
+    case "windmill":
+      return { background: "#e0f2fe", color: "#0c4a6e" };
+    default:
+      return { background: "#f3f4f6", color: "#4b5563" };
+  }
 }
 
-function getTrendLabel(trend: string | null): { text: string; color: string } {
-  if (trend === "positive") return { text: "↑ Vegetation Growing", color: "#16a34a" };
-  if (trend === "negative") return { text: "↓ Declining", color: "#dc2626" };
-  return { text: "→ Stable", color: "#6b7280" };
+function formatConfidence(project: ProjectSatelliteData): string {
+  if (project.satellite_confidence_score === null) return "Pending";
+  const badge = project.satellite_confidence_badge ?? "Unknown";
+  return `${badge} (${project.satellite_confidence_score}/100)`;
 }
 
-export default function ProjectInfoCard({ project }: ProjectInfoCardProps) {
-  const typeBadgeStyle = useMemo(
-    () => getProjectTypeBadgeStyle(project.project_type),
-    [project.project_type],
-  );
+function formatNdvi(project: ProjectSatelliteData): string {
+  if (project.satellite_ndvi_current === null) return "Pending";
+  return project.satellite_ndvi_current.toFixed(3);
+}
 
-  const confidenceStyle = useMemo(
-    () => getConfidenceStyle(project.satellite_confidence_badge ?? "Low"),
-    [project.satellite_confidence_badge],
-  );
+function formatPrice(project: ProjectSatelliteData): string {
+  if (project.price_per_credit_inr === null) return "Pending";
+  return `INR ${project.price_per_credit_inr.toLocaleString()}`;
+}
 
-  const trend = useMemo(
-    () => getTrendLabel(project.satellite_ndvi_trend ?? null),
-    [project.satellite_ndvi_trend],
-  );
-
-  const isForestry = project.project_type === "forestry";
-  const isCompleted = project.satellite_status === "completed";
-  const isProcessing = project.satellite_status === "processing";
-  const isFailed = project.satellite_status === "failed";
-  const locationConfirmed = (project.satellite_confidence_score ?? 0) > 20;
+export default function ProjectInfoCard({
+  project,
+  onMouseEnter,
+  onMouseLeave,
+}: ProjectInfoCardProps) {
+  const badgeStyle = getProjectTypeBadgeStyle(project.project_type);
 
   return (
     <div
+      onMouseEnter={onMouseEnter}
+      onMouseLeave={onMouseLeave}
       style={{
-        width: 240,
+        width: 280,
         fontFamily:
           "system-ui, -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, Helvetica, Arial, sans-serif",
-        padding: 0,
         color: "#111827",
       }}
     >
-      <style>{`
-        @keyframes zc-spin {
-          from { transform: rotate(0deg); }
-          to { transform: rotate(360deg); }
-        }
-      `}</style>
+      <div
+        style={{
+          width: "100%",
+          height: 136,
+          position: "relative",
+          borderRadius: 10,
+          overflow: "hidden",
+          background: "#f3f4f6",
+          marginBottom: 10,
+          border: "1px solid #e5e7eb",
+        }}
+      >
+        {project.project_image_url ? (
+          <Image
+            src={project.project_image_url}
+            alt={`${project.project_name} preview`}
+            fill
+            sizes="280px"
+            style={{ objectFit: "cover", display: "block" }}
+          />
+        ) : (
+          <div
+            style={{
+              width: "100%",
+              height: "100%",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              color: "#9ca3af",
+              fontSize: 12,
+              fontWeight: 600,
+              letterSpacing: "0.02em",
+            }}
+          >
+            IMAGE PENDING
+          </div>
+        )}
+      </div>
 
       <span
         style={{
           display: "inline-flex",
           alignItems: "center",
-          padding: "2px 8px",
+          padding: "3px 9px",
           borderRadius: 9999,
           fontSize: 10,
-          fontWeight: 600,
+          fontWeight: 700,
           textTransform: "uppercase",
-          letterSpacing: "0.05em",
-          marginBottom: 6,
-          ...typeBadgeStyle,
+          letterSpacing: "0.06em",
+          marginBottom: 8,
+          ...badgeStyle,
         }}
       >
-        {project.project_type}
+        {getProjectTypeLabel(project.project_type)}
       </span>
 
-      <div
+      <h3
         style={{
-          fontSize: 14,
-          fontWeight: 700,
-          color: "#111827",
+          margin: 0,
           marginBottom: 10,
+          fontSize: 15,
+          fontWeight: 700,
           lineHeight: 1.3,
         }}
       >
         {project.project_name}
+      </h3>
+
+      <div style={{ display: "grid", gap: 6 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 12, fontSize: 12 }}>
+          <span style={{ color: "#6b7280" }}>Confidence</span>
+          <span style={{ color: "#111827", fontWeight: 600 }}>{formatConfidence(project)}</span>
+        </div>
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 12, fontSize: 12 }}>
+          <span style={{ color: "#6b7280" }}>NDVI</span>
+          <span style={{ color: "#111827", fontWeight: 600 }}>{formatNdvi(project)}</span>
+        </div>
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 12, fontSize: 12 }}>
+          <span style={{ color: "#6b7280" }}>Price / Credit</span>
+          <span style={{ color: "#111827", fontWeight: 600 }}>{formatPrice(project)}</span>
+        </div>
       </div>
 
-      {isProcessing ? (
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 8,
-            color: "#6b7280",
-            fontSize: 12,
-          }}
-        >
-          <span
-            style={{
-              width: 12,
-              height: 12,
-              border: "2px solid #9ca3af",
-              borderTopColor: "transparent",
-              borderRadius: "50%",
-              display: "inline-block",
-              animation: "zc-spin 0.9s linear infinite",
-            }}
-          />
-          <span>Analyzing satellite data...</span>
-        </div>
-      ) : null}
-
-      {isFailed ? (
-        <div style={{ color: "#9ca3af", fontSize: 12 }}>Satellite analysis unavailable</div>
-      ) : null}
-
-      {isCompleted ? (
-        <div>
-          <span
-            style={{
-              display: "inline-flex",
-              alignItems: "center",
-              borderRadius: 9999,
-              padding: "3px 8px",
-              fontSize: 11,
-              fontWeight: 600,
-              ...confidenceStyle,
-            }}
-          >
-            {(project.satellite_confidence_badge ?? "Low").toString()} Confidence •{" "}
-            {project.satellite_confidence_score ?? 0}/100
-          </span>
-
-          {isForestry && project.satellite_ndvi_current !== null ? (
-            <>
-              <div style={{ marginTop: 6, fontSize: 12, color: "#374151" }}>
-                NDVI: {project.satellite_ndvi_current.toFixed(3)}
-              </div>
-              <div style={{ marginTop: 2, fontSize: 11, color: trend.color }}>{trend.text}</div>
-            </>
-          ) : null}
-
-          {!isForestry ? (
-            <div
-              style={{
-                marginTop: 6,
-                fontSize: 12,
-                color: locationConfirmed ? "#16a34a" : "#dc2626",
-              }}
-            >
-              {locationConfirmed ? "📍 Location Confirmed" : "📍 Location Unconfirmed"}
-            </div>
-          ) : null}
-        </div>
-      ) : null}
-
-      <div style={{ marginTop: 8, fontSize: 12, color: "#6b7280" }}>
-        🌿 {project.estimated_co2_per_year.toLocaleString()} tCO2e/yr
-      </div>
-
-      <div style={{ marginTop: 4, fontSize: 11, color: "#9ca3af" }}>Price: Coming Soon</div>
-
-      <button
-        type="button"
-        onClick={() => {
-          window.location.href = "/projects";
-        }}
+      <Link
+        href={`/projects/${project.id}`}
         style={{
           marginTop: 12,
           width: "100%",
-          padding: "8px 0",
-          background: "#16a34a",
-          color: "#ffffff",
-          border: "none",
+          display: "inline-flex",
+          alignItems: "center",
+          justifyContent: "center",
+          padding: "9px 0",
+          background: "#bbf7d0",
+          color: "#166534",
+          border: "1px solid #86efac",
           borderRadius: 8,
           fontSize: 13,
-          fontWeight: 600,
+          fontWeight: 700,
           cursor: "pointer",
-          textAlign: "center",
+          textDecoration: "none",
         }}
       >
-        View Project
-      </button>
+        Buy Project
+      </Link>
     </div>
   );
 }

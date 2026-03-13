@@ -7,7 +7,13 @@ import {
 } from "@/lib/gee/confidence-calculator";
 import { createServiceSupabaseClient } from "@/lib/supabase/service";
 
-type ProjectType = "forestry" | "solar" | "methane" | "other";
+type ProjectType =
+  | "forestry"
+  | "agricultural"
+  | "solar"
+  | "methane"
+  | "windmill"
+  | "other";
 
 type AnalyzePayload = {
   projectId?: unknown;
@@ -45,7 +51,13 @@ function parsePayload(payload: AnalyzePayload): {
   const landAreaHectares = toNumber(payload.landAreaHectares);
 
   if (!projectId) return null;
-  if (!["forestry", "solar", "methane", "other"].includes(projectType)) return null;
+  if (
+    !["forestry", "agricultural", "solar", "methane", "windmill", "other"].includes(
+      projectType,
+    )
+  ) {
+    return null;
+  }
   if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) return null;
   if (!Number.isFinite(landAreaHectares) || landAreaHectares <= 0) return null;
 
@@ -89,7 +101,10 @@ export async function POST(request: Request) {
     .eq("id", payload.projectId);
 
   try {
-    if (payload.projectType === "forestry") {
+    if (
+      payload.projectType === "forestry" ||
+      payload.projectType === "agricultural"
+    ) {
       const result = await runForestryNdviAnalysis({
         latitude: payload.latitude,
         longitude: payload.longitude,

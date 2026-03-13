@@ -1,4 +1,4 @@
-export type ProjectType = "forestry" | "solar" | "methane" | "other";
+export type ProjectType = "forestry" | "agricultural" | "solar" | "methane" | "windmill";
 
 export type SatelliteStatus = "pending" | "processing" | "completed" | "failed";
 
@@ -8,8 +8,8 @@ export interface ProjectSatelliteData {
   project_type: ProjectType;
   latitude: number;
   longitude: number;
-  land_area_hectares: number;
-  estimated_co2_per_year: number;
+  land_area_hectares: number | null;
+  estimated_co2_per_year: number | null;
   satellite_status: SatelliteStatus | string;
   satellite_ndvi_current: number | null;
   satellite_ndvi_2020: number | null;
@@ -20,5 +20,6 @@ export interface ProjectSatelliteData {
   satellite_confidence_badge: "High" | "Medium" | "Low" | null | string;
   satellite_thumbnail_url: string | null;
   satellite_verified_at: string | null;
-  price_per_credit: null;
+  project_image_url: string | null;
+  price_per_credit_inr: number | null;
 }
