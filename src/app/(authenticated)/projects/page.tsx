@@ -13,6 +13,7 @@ import {
   resolveSignedMediaUrl,
   SIGNED_IMAGE_TRANSFORMS,
 } from "@/lib/utils/signedMedia";
+import { computeRemainingCredits } from "@/lib/payments/math";
 
 const ITEMS_PER_PAGE = 12;
 
@@ -27,6 +28,8 @@ type ProjectRow = {
   project_type: string | null;
   created_at: string;
   satellite_ndvi_current: number | null;
+  credits_reserved: number | null;
+  credits_sold: number | null;
   review_notes: string | null;
 };
 
@@ -36,6 +39,7 @@ type ListingRow = {
   title: string;
   description: string;
   pricePerCreditInr: number | null;
+  creditsRemaining: number | null;
   satelliteNdviCurrent: number | null;
   photoPaths: string[];
   searchText: string;
@@ -143,7 +147,9 @@ export default async function ProjectsPage({
 
   const { data, error } = await supabase
     .from("carbon_projects")
-    .select("id, project_name, project_type, created_at, satellite_ndvi_current, review_notes")
+    .select(
+      "id, project_name, project_type, created_at, satellite_ndvi_current, credits_reserved, credits_sold, review_notes",
+    )
     .eq("status", "verified")
     .order("created_at", { ascending: false });
 
@@ -169,6 +175,11 @@ export default async function ProjectsPage({
       title,
       description,
       pricePerCreditInr: valuation.pricePerCreditInr,
+      creditsRemaining: computeRemainingCredits({
+        valuationCredits: valuation.creditsAvailable,
+        creditsReserved: project.credits_reserved,
+        creditsSold: project.credits_sold,
+      }),
       satelliteNdviCurrent: project.satellite_ndvi_current,
       photoPaths: metadata.project_photo_urls?.slice(0, 2) ?? [],
       searchText: getSearchText({
@@ -278,6 +289,7 @@ export default async function ProjectsPage({
                 referenceId={card.referenceId}
                 title={card.title}
                 pricePerCreditInr={card.pricePerCreditInr}
+                creditsRemaining={card.creditsRemaining}
                 satelliteNdviCurrent={card.satelliteNdviCurrent}
                 description={card.description}
               />

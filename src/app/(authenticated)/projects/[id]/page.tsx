@@ -13,6 +13,7 @@ import {
   SIGNED_IMAGE_TRANSFORMS,
 } from "@/lib/utils/signedMedia";
 import { resolveAndPersistProjectAiValuation } from "@/lib/valuation/carbonValuation";
+import { computeRemainingCredits } from "@/lib/payments/math";
 
 type ProjectRow = {
   id: string;
@@ -36,6 +37,8 @@ type ProjectRow = {
   satellite_thumbnail_url: string | null;
   satellite_error_message: string | null;
   satellite_last_attempted_at: string | null;
+  credits_reserved: number | null;
+  credits_sold: number | null;
   review_notes: string | null;
 };
 
@@ -139,7 +142,7 @@ export default async function MarketplaceProductPage({
   const { data, error } = await supabase
     .from("carbon_projects")
     .select(
-      "id, user_id, project_name, project_type, status, created_at, submitted_at, latitude, longitude, polygon_geojson, land_area_hectares, estimated_co2_per_year, project_start_date, satellite_status, satellite_ndvi_current, satellite_ndvi_trend, satellite_confidence_score, satellite_confidence_badge, satellite_thumbnail_url, satellite_error_message, satellite_last_attempted_at, review_notes",
+      "id, user_id, project_name, project_type, status, created_at, submitted_at, latitude, longitude, polygon_geojson, land_area_hectares, estimated_co2_per_year, project_start_date, satellite_status, satellite_ndvi_current, satellite_ndvi_trend, satellite_confidence_score, satellite_confidence_badge, satellite_thumbnail_url, satellite_error_message, satellite_last_attempted_at, credits_reserved, credits_sold, review_notes",
     )
     .eq("id", id)
     .eq("status", "verified")
@@ -236,7 +239,11 @@ export default async function MarketplaceProductPage({
   const valuation = getNormalizedProjectAiValuation(
     resolvedValuation ?? metadata.ai_valuation,
   );
-  const creditsAvailable = valuation.creditsAvailable;
+  const creditsAvailable = computeRemainingCredits({
+    valuationCredits: valuation.creditsAvailable,
+    creditsReserved: project.credits_reserved,
+    creditsSold: project.credits_sold,
+  });
   const pricePerCreditInr = valuation.pricePerCreditInr;
 
   const locationLabel =

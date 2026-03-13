@@ -158,6 +158,18 @@ export default function MarketplaceProductDetailClient({
     return Math.max(1, Math.min(creditsAvailable, 1_000_000));
   }, [creditsAvailable]);
 
+  const canBuy = useMemo(() => {
+    const hasPrice =
+      pricePerCreditInr !== null &&
+      Number.isFinite(pricePerCreditInr) &&
+      pricePerCreditInr > 0;
+    const hasCredits =
+      creditsAvailable !== null &&
+      Number.isFinite(creditsAvailable) &&
+      creditsAvailable > 0;
+    return hasPrice && hasCredits;
+  }, [creditsAvailable, pricePerCreditInr]);
+
   const totalPrice = useMemo(() => {
     if (pricePerCreditInr === null || !Number.isFinite(pricePerCreditInr)) {
       return null;
@@ -166,6 +178,7 @@ export default function MarketplaceProductDetailClient({
   }, [pricePerCreditInr, quantity]);
 
   const handleBuyNow = () => {
+    if (!canBuy) return;
     router.push(`/projects/${projectId}/payment?quantity=${quantity}`);
   };
 
@@ -383,9 +396,10 @@ export default function MarketplaceProductDetailClient({
                 <button
                   type="button"
                   onClick={handleBuyNow}
-                  className="rounded-xl bg-green-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-green-700"
+                  disabled={!canBuy}
+                  className="rounded-xl bg-green-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-green-700 disabled:cursor-not-allowed disabled:opacity-60"
                 >
-                  Buy with Credits
+                  {canBuy ? "Buy with Credits" : "Buy Unavailable"}
                 </button>
               </div>
 

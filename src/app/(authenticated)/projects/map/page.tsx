@@ -11,13 +11,19 @@ import {
   parseProjectReviewNotes,
 } from "@/lib/utils/projectMetadata";
 import type { ProjectSatelliteData, ProjectType } from "@/types/satellite";
+import { computeRemainingCredits } from "@/lib/payments/math";
 
 type ProfileRow = {
   phone_verified: boolean | null;
   verification_status: string | null;
 };
 
-type RawProjectRow = Omit<ProjectSatelliteData, "project_image_url" | "price_per_credit_inr"> & {
+type RawProjectRow = Omit<
+  ProjectSatelliteData,
+  "project_image_url" | "price_per_credit_inr" | "remaining_credits"
+> & {
+  credits_reserved: number | null;
+  credits_sold: number | null;
   review_notes: string | null;
 };
 
@@ -82,6 +88,8 @@ export default async function ProjectsMapPage() {
       satellite_confidence_badge,
       satellite_thumbnail_url,
       satellite_verified_at,
+      credits_reserved,
+      credits_sold,
       review_notes
     `,
     )
@@ -113,9 +121,16 @@ export default async function ProjectsMapPage() {
         logContext: "satellite_map_photo_signed_url_failed",
         transform: SIGNED_IMAGE_TRANSFORMS.mapCard,
       });
-      const aiPrice = getNormalizedProjectAiValuation(
+      const normalizedValuation = getNormalizedProjectAiValuation(
         submissionMetadata.ai_valuation,
-      ).pricePerCreditInr;
+      );
+      const aiPrice = normalizedValuation.pricePerCreditInr;
+      const valuationCredits = normalizedValuation.creditsAvailable;
+      const remainingCredits = computeRemainingCredits({
+        valuationCredits,
+        creditsReserved: project.credits_reserved ?? 0,
+        creditsSold: project.credits_sold ?? 0,
+      });
 
       return {
         ...project,
@@ -123,6 +138,7 @@ export default async function ProjectsMapPage() {
         longitude: Number(project.longitude),
         project_image_url: projectImageUrl,
         price_per_credit_inr: Number.isFinite(aiPrice) ? Number(aiPrice) : null,
+        remaining_credits: remainingCredits,
       };
     }),
   );

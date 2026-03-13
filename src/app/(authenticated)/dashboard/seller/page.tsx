@@ -8,6 +8,7 @@ import {
 } from "lucide-react";
 import ProjectCard from "@/components/dashboard/seller/ProjectCard";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
+import { createServiceSupabaseClient } from "@/lib/supabase/service";
 import {
   getNormalizedProjectAiValuation,
   getSubmissionDescription,
@@ -16,6 +17,7 @@ import {
 } from "@/lib/utils/projectMetadata";
 import { resolveAndPersistProjectAiValuation } from "@/lib/valuation/carbonValuation";
 import type { IdentityStatus } from "@/types/dashboard";
+import { parseNumeric } from "@/lib/payments/orders";
 
 type ProjectRow = {
   id: string;
@@ -47,6 +49,17 @@ interface SellerProjectCardModel {
   valuation: ProjectAiValuation;
 }
 
+type RecentSaleRow = {
+  id: string;
+  purchase_ref: string;
+  project_name_snapshot: string;
+  reference_id_snapshot: string;
+  buyer_company_name_snapshot: string;
+  quantity: number | null;
+  total_amount_inr: number | string | null;
+  created_at: string;
+};
+
 function parseRejectionReason(status: string, reviewNotes: string | null): string {
   if (status !== "rejected" || !reviewNotes) {
     return "";
@@ -71,6 +84,16 @@ export default async function SellerDashboardPage() {
   } = await supabase.auth.getUser();
 
   let projects: SellerProjectCardModel[] = [];
+  let recentSales: Array<{
+    id: string;
+    purchaseRef: string;
+    projectName: string;
+    referenceId: string;
+    buyerCompanyName: string;
+    quantity: number;
+    totalAmountInr: number;
+    createdAt: string;
+  }> = [];
 
   if (user?.id) {
     const { data: projectsData, error: projectsError } = await supabase
@@ -123,6 +146,41 @@ export default async function SellerDashboardPage() {
 
       projects = hydratedProjects;
     }
+
+    try {
+      const service = createServiceSupabaseClient();
+      const { data: salesData, error: salesError } = await service
+        .from("project_credit_orders")
+        .select(
+          "id, purchase_ref, project_name_snapshot, reference_id_snapshot, buyer_company_name_snapshot, quantity, total_amount_inr, created_at",
+        )
+        .eq("seller_user_id", user.id)
+        .eq("status", "captured")
+        .order("created_at", { ascending: false });
+
+      if (salesError) {
+        console.error("seller_dashboard_sales_query_failed", {
+          userId: user.id,
+          reason: salesError.message,
+        });
+      } else {
+        recentSales = ((salesData ?? []) as RecentSaleRow[]).map((sale) => ({
+          id: sale.id,
+          purchaseRef: sale.purchase_ref,
+          projectName: sale.project_name_snapshot,
+          referenceId: sale.reference_id_snapshot,
+          buyerCompanyName: sale.buyer_company_name_snapshot,
+          quantity: Math.max(0, Math.floor(parseNumeric(sale.quantity ?? 0))),
+          totalAmountInr: parseNumeric(sale.total_amount_inr ?? 0),
+          createdAt: sale.created_at,
+        }));
+      }
+    } catch (error) {
+      console.error("seller_dashboard_sales_service_init_failed", {
+        userId: user.id,
+        reason: error instanceof Error ? error.message : "unknown_error",
+      });
+    }
   }
 
   const totalProjects = projects.length;
@@ -160,6 +218,13 @@ export default async function SellerDashboardPage() {
         project.projectType === "methane" ||
         project.projectType === "windmill"),
   );
+
+  const totalCreditsSold = recentSales.reduce((sum, sale) => sum + sale.quantity, 0);
+  const totalRevenueEarnedInr = recentSales.reduce(
+    (sum, sale) => sum + sale.totalAmountInr,
+    0,
+  );
+  const visibleRecentSales = recentSales.slice(0, 8);
 
   return (
     <div className="text-gray-900">
@@ -214,18 +279,30 @@ export default async function SellerDashboardPage() {
           <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-emerald-50">
             <TrendingUp className="h-5 w-5 text-emerald-500" />
           </div>
-          <p className="mt-3 text-xl font-bold text-gray-900 md:text-2xl">0</p>
+          <p className="mt-3 text-xl font-bold text-gray-900 md:text-2xl">
+            {totalCreditsSold.toLocaleString("en-IN")}
+          </p>
           <p className="mt-1 text-xs font-medium text-gray-500 md:text-sm">Credits Sold</p>
-          <p className="mt-1 text-xs text-gray-400">Lifetime sales</p>
+          <p className="mt-1 text-xs text-gray-400">
+            {totalCreditsSold > 0 ? "Captured sales" : "No captured sales yet"}
+          </p>
         </article>
 
         <article className="rounded-2xl border border-gray-100 bg-white p-4 shadow-sm md:p-5">
           <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-purple-50">
             <DollarSign className="h-5 w-5 text-purple-500" />
           </div>
-          <p className="mt-3 text-xl font-bold text-gray-900 md:text-2xl">$0.00</p>
+          <p className="mt-3 text-xl font-bold text-gray-900 md:text-2xl">
+            INR{" "}
+            {totalRevenueEarnedInr.toLocaleString("en-IN", {
+              minimumFractionDigits: 2,
+              maximumFractionDigits: 2,
+            })}
+          </p>
           <p className="mt-1 text-xs font-medium text-gray-500 md:text-sm">Revenue Earned</p>
-          <p className="mt-1 text-xs text-gray-400">Total earnings</p>
+          <p className="mt-1 text-xs text-gray-400">
+            {totalRevenueEarnedInr > 0 ? "Gross captured revenue" : "No revenue yet"}
+          </p>
         </article>
       </div>
 
@@ -274,12 +351,58 @@ export default async function SellerDashboardPage() {
 
         <section className="rounded-2xl border border-gray-100 bg-white p-6 shadow-sm">
           <h2 className="mb-6 text-base font-semibold text-gray-900">Sales Overview</h2>
-          <div className="flex min-h-55 flex-col items-center justify-center rounded-2xl border border-dashed border-gray-200 bg-gray-50">
-            <BarChart2 className="h-12 w-12 text-gray-300" />
-            <p className="mt-4 max-w-sm text-center text-sm text-gray-500">
-              Sales data will appear here once your first project is approved.
-            </p>
-          </div>
+          {visibleRecentSales.length === 0 ? (
+            <div className="flex min-h-55 flex-col items-center justify-center rounded-2xl border border-dashed border-gray-200 bg-gray-50">
+              <BarChart2 className="h-12 w-12 text-gray-300" />
+              <p className="mt-4 max-w-sm text-center text-sm text-gray-500">
+                Captured sales will appear here after buyers complete payments.
+              </p>
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full min-w-[760px] border-collapse">
+                <thead>
+                  <tr className="border-b border-gray-200 text-left text-xs uppercase tracking-wide text-gray-500">
+                    <th className="py-2 pr-3">Purchase Ref</th>
+                    <th className="py-2 pr-3">Project</th>
+                    <th className="py-2 pr-3">Buyer</th>
+                    <th className="py-2 pr-3">Quantity</th>
+                    <th className="py-2 pr-3">Total</th>
+                    <th className="py-2">Date</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {visibleRecentSales.map((sale) => (
+                    <tr key={sale.id} className="border-b border-gray-100 text-sm text-gray-700">
+                      <td className="py-3 pr-3 font-semibold text-gray-900">{sale.purchaseRef}</td>
+                      <td className="py-3 pr-3">
+                        <p className="font-medium text-gray-900">{sale.projectName}</p>
+                        <p className="text-xs text-gray-500">{sale.referenceId}</p>
+                      </td>
+                      <td className="py-3 pr-3">{sale.buyerCompanyName}</td>
+                      <td className="py-3 pr-3">{sale.quantity.toLocaleString("en-IN")}</td>
+                      <td className="py-3 pr-3 font-semibold text-gray-900">
+                        INR{" "}
+                        {sale.totalAmountInr.toLocaleString("en-IN", {
+                          minimumFractionDigits: 2,
+                          maximumFractionDigits: 2,
+                        })}
+                      </td>
+                      <td className="py-3 text-xs text-gray-500">
+                        {new Intl.DateTimeFormat("en-IN", {
+                          year: "numeric",
+                          month: "short",
+                          day: "2-digit",
+                          hour: "2-digit",
+                          minute: "2-digit",
+                        }).format(new Date(sale.createdAt))}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
         </section>
       </div>
     </div>

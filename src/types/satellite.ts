@@ -22,4 +22,5 @@ export interface ProjectSatelliteData {
   satellite_verified_at: string | null;
   project_image_url: string | null;
   price_per_credit_inr: number | null;
+  remaining_credits: number | null;
 }

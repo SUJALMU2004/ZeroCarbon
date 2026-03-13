@@ -7,6 +7,7 @@ import {
 } from "@/lib/utils/projectMetadata";
 import { getProjectReference } from "@/lib/utils/projectReference";
 import { resolveAndPersistProjectAiValuation } from "@/lib/valuation/carbonValuation";
+import { computeRemainingCredits } from "@/lib/payments/math";
 
 type SearchParams = {
   quantity?: string | string[];
@@ -27,6 +28,8 @@ type ProjectRow = {
   satellite_ndvi_current: number | null;
   satellite_error_message: string | null;
   satellite_last_attempted_at: string | null;
+  credits_reserved: number | null;
+  credits_sold: number | null;
   review_notes: string | null;
 };
 
@@ -59,6 +62,14 @@ function getProjectTypeLabel(projectType: string | null): string {
   return "Project";
 }
 
+function getGstRatePercent(): number {
+  const raw = process.env.PAYMENT_GST_RATE_PERCENT;
+  if (!raw) return 2.5;
+  const parsed = Number(raw);
+  if (!Number.isFinite(parsed) || parsed < 0) return 2.5;
+  return parsed;
+}
+
 export default async function ProjectPaymentDetailsPage({
   params,
   searchParams,
@@ -84,7 +95,7 @@ export default async function ProjectPaymentDetailsPage({
   const { data: projectData, error: projectError } = await supabase
     .from("carbon_projects")
     .select(
-      "id, project_name, project_type, status, created_at, latitude, longitude, polygon_geojson, land_area_hectares, project_start_date, satellite_status, satellite_ndvi_current, satellite_error_message, satellite_last_attempted_at, review_notes",
+      "id, project_name, project_type, status, created_at, latitude, longitude, polygon_geojson, land_area_hectares, project_start_date, satellite_status, satellite_ndvi_current, satellite_error_message, satellite_last_attempted_at, credits_reserved, credits_sold, review_notes",
     )
     .eq("id", id)
     .eq("status", "verified")
@@ -130,7 +141,11 @@ export default async function ProjectPaymentDetailsPage({
     resolvedValuation ?? parsedNotes.submissionMetadata.ai_valuation,
   );
 
-  const creditsAvailable = valuation.creditsAvailable;
+  const creditsAvailable = computeRemainingCredits({
+    valuationCredits: valuation.creditsAvailable,
+    creditsReserved: project.credits_reserved,
+    creditsSold: project.credits_sold,
+  });
   const maxQuantity =
     creditsAvailable !== null &&
     Number.isFinite(creditsAvailable) &&
@@ -167,6 +182,7 @@ export default async function ProjectPaymentDetailsPage({
       unitPricePerCreditInr={valuation.pricePerCreditInr}
       creditsAvailable={creditsAvailable}
       initialQuantity={clampedInitialQuantity}
+      gstRatePercent={getGstRatePercent()}
       buyerCompanyName={company?.legal_company_name?.trim() || null}
       buyerCompanyStatus={company?.status ?? null}
     />

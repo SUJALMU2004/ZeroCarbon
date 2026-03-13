@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
 import { createServerSupabaseClient } from "@/lib/supabase/server";
+import { createServiceSupabaseClient } from "@/lib/supabase/service";
 import type { IdentityStatus } from "@/types/dashboard";
+import { parseNumeric } from "@/lib/payments/orders";
+import { computeOffsetProgressPercent } from "@/lib/payments/math";
 
 type CompanyRow = {
   id: string;
@@ -46,6 +49,7 @@ function buildDefaultResponse(errorState: boolean) {
     stats: {
       credits_purchased: 0,
       offset_progress_percent: 0,
+      total_spent_inr: 0,
       total_spent_usd: 0,
       total_emissions_tco2e: null as number | null,
       emissions_mode: "none" as EmissionsMode,
@@ -84,6 +88,8 @@ export async function GET() {
     let totalEmissionsTco2e: number | null = null;
     let emissionsMode: EmissionsMode = "none";
     let emissionsNote: string | null = null;
+    let creditsPurchased = 0;
+    let totalSpentInr = 0;
 
     if (typedCompany?.id) {
       const { data: emissionsData, error: emissionsError } = await supabase
@@ -113,6 +119,39 @@ export async function GET() {
       }
     }
 
+    const service = createServiceSupabaseClient();
+    const { data: capturedOrdersData, error: capturedOrdersError } = await service
+      .from("project_credit_orders")
+      .select("quantity, total_amount_inr")
+      .eq("buyer_user_id", user.id)
+      .eq("status", "captured");
+
+    if (capturedOrdersError) {
+      console.error("buyer_stats_orders_query_failed", {
+        userId: user.id,
+        reason: capturedOrdersError.message,
+      });
+    } else {
+      const rows = (capturedOrdersData ?? []) as Array<{
+        quantity: number | null;
+        total_amount_inr: number | string | null;
+      }>;
+
+      creditsPurchased = rows.reduce((sum, row) => {
+        const quantity = parseNumeric(row.quantity ?? 0);
+        return sum + Math.max(0, Math.floor(quantity));
+      }, 0);
+
+      totalSpentInr = rows.reduce((sum, row) => {
+        return sum + parseNumeric(row.total_amount_inr ?? 0);
+      }, 0);
+    }
+
+    const offsetProgressPercent = computeOffsetProgressPercent({
+      purchasedCredits: creditsPurchased,
+      latestEmissionsTco2e: totalEmissionsTco2e,
+    });
+
     return NextResponse.json(
       {
         _error: false,
@@ -124,8 +163,9 @@ export async function GET() {
             null,
         },
         stats: {
-          credits_purchased: 0,
-          offset_progress_percent: 0,
+          credits_purchased: creditsPurchased,
+          offset_progress_percent: offsetProgressPercent,
+          total_spent_inr: totalSpentInr,
           total_spent_usd: 0,
           total_emissions_tco2e: totalEmissionsTco2e,
           emissions_mode: emissionsMode,

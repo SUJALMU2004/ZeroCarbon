@@ -61,12 +61,22 @@ function formatPrice(project: ProjectSatelliteData): string {
   return `INR ${project.price_per_credit_inr.toLocaleString()}`;
 }
 
+function formatRemainingCredits(project: ProjectSatelliteData): string {
+  if (project.remaining_credits === null) return "Pending";
+  return project.remaining_credits.toLocaleString();
+}
+
 export default function ProjectInfoCard({
   project,
   onMouseEnter,
   onMouseLeave,
 }: ProjectInfoCardProps) {
   const badgeStyle = getProjectTypeBadgeStyle(project.project_type);
+  const canBuy =
+    project.price_per_credit_inr !== null &&
+    project.price_per_credit_inr > 0 &&
+    project.remaining_credits !== null &&
+    project.remaining_credits > 0;
 
   return (
     <div
@@ -160,29 +170,56 @@ export default function ProjectInfoCard({
           <span style={{ color: "#6b7280" }}>Price / Credit</span>
           <span style={{ color: "#111827", fontWeight: 600 }}>{formatPrice(project)}</span>
         </div>
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 12, fontSize: 12 }}>
+          <span style={{ color: "#6b7280" }}>Credits Left</span>
+          <span style={{ color: "#111827", fontWeight: 600 }}>
+            {formatRemainingCredits(project)}
+          </span>
+        </div>
       </div>
 
-      <Link
-        href={`/projects/${project.id}`}
-        style={{
-          marginTop: 12,
-          width: "100%",
-          display: "inline-flex",
-          alignItems: "center",
-          justifyContent: "center",
-          padding: "9px 0",
-          background: "#bbf7d0",
-          color: "#166534",
-          border: "1px solid #86efac",
-          borderRadius: 8,
-          fontSize: 13,
-          fontWeight: 700,
-          cursor: "pointer",
-          textDecoration: "none",
-        }}
-      >
-        Buy Project
-      </Link>
+      {canBuy ? (
+        <Link
+          href={`/projects/${project.id}`}
+          style={{
+            marginTop: 12,
+            width: "100%",
+            display: "inline-flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: "9px 0",
+            background: "#bbf7d0",
+            color: "#166534",
+            border: "1px solid #86efac",
+            borderRadius: 8,
+            fontSize: 13,
+            fontWeight: 700,
+            cursor: "pointer",
+            textDecoration: "none",
+          }}
+        >
+          Buy Project
+        </Link>
+      ) : (
+        <div
+          style={{
+            marginTop: 12,
+            width: "100%",
+            display: "inline-flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: "9px 0",
+            background: "#f3f4f6",
+            color: "#6b7280",
+            border: "1px solid #e5e7eb",
+            borderRadius: 8,
+            fontSize: 13,
+            fontWeight: 700,
+          }}
+        >
+          Buy Unavailable
+        </div>
+      )}
     </div>
   );
 }

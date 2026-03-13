@@ -9,6 +9,7 @@ interface MarketplaceProjectCardProps {
   referenceId: string;
   title: string;
   pricePerCreditInr: number | null;
+  creditsRemaining: number | null;
   satelliteNdviCurrent: number | null;
   description: string;
 }
@@ -27,6 +28,13 @@ function formatNdvi(value: number | null): string {
   }
 
   return value.toFixed(3);
+}
+
+function formatCreditsRemaining(value: number | null): string {
+  if (value === null || !Number.isFinite(value)) {
+    return "Pending";
+  }
+  return value.toLocaleString("en-IN");
 }
 
 function getNdviBadgeMeta(value: number | null): { label: string; className: string } {
@@ -63,6 +71,7 @@ export default function MarketplaceProjectCard({
   referenceId,
   title,
   pricePerCreditInr,
+  creditsRemaining,
   satelliteNdviCurrent,
   description,
 }: MarketplaceProjectCardProps) {
@@ -132,6 +141,13 @@ export default function MarketplaceProjectCard({
         </div>
 
         <p className="line-clamp-3 text-sm leading-relaxed text-slate-600">{description}</p>
+
+        <p className="text-xs font-medium text-slate-500">
+          Credits Left:{" "}
+          <span className="font-semibold text-slate-700">
+            {formatCreditsRemaining(creditsRemaining)}
+          </span>
+        </p>
 
         <Link
           href={`/projects/${projectId}`}

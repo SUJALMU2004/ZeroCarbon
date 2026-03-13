@@ -1,7 +1,8 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { toast } from "sonner";
 import { Building2, Lock, ReceiptText } from "lucide-react";
 import ProjectQuantitySelector from "@/components/projects/ProjectQuantitySelector";
@@ -14,8 +15,45 @@ interface ProjectPaymentDetailsClientProps {
   unitPricePerCreditInr: number | null;
   creditsAvailable: number | null;
   initialQuantity: number;
+  gstRatePercent: number;
   buyerCompanyName: string | null;
   buyerCompanyStatus: string | null;
+}
+
+type CreateOrderResponse = {
+  reused: boolean;
+  message: string | null;
+  purchaseRef: string;
+  order: {
+    status: string;
+    quantity: number;
+    unitPriceInr: number;
+    subtotalInr: number;
+    gstRatePercent: number;
+    gstAmountInr: number;
+    totalAmountInr: number;
+    currency: string;
+    reservationExpiresAt: string | null;
+    projectName: string;
+    referenceId: string;
+  };
+  checkout: {
+    keyId: string;
+    razorpayOrderId: string;
+    amountPaise: number;
+    currency: string;
+    name: string;
+    description: string;
+    notes: Record<string, string>;
+  } | null;
+};
+
+declare global {
+  interface Window {
+    Razorpay?: new (options: Record<string, unknown>) => {
+      open: () => void;
+    };
+  }
 }
 
 function formatCurrency(value: number | null): string {
@@ -43,9 +81,11 @@ export default function ProjectPaymentDetailsClient({
   unitPricePerCreditInr,
   creditsAvailable,
   initialQuantity,
+  gstRatePercent,
   buyerCompanyName,
   buyerCompanyStatus,
 }: ProjectPaymentDetailsClientProps) {
+  const router = useRouter();
   const isVerifiedCompany = buyerCompanyStatus === "verified";
   const hasCertificateCompanyName =
     typeof buyerCompanyName === "string" && buyerCompanyName.trim().length > 0;
@@ -64,6 +104,8 @@ export default function ProjectPaymentDetailsClient({
   const [quantity, setQuantity] = useState(() =>
     Math.min(Math.max(1, Math.floor(initialQuantity)), maxQuantity),
   );
+  const [isCheckoutLoading, setIsCheckoutLoading] = useState(false);
+  const [isRazorpayScriptReady, setIsRazorpayScriptReady] = useState(false);
 
   const hasPrice =
     unitPricePerCreditInr !== null &&
@@ -74,13 +116,61 @@ export default function ProjectPaymentDetailsClient({
     Number.isFinite(creditsAvailable) &&
     creditsAvailable > 0;
 
-  const totalPrice = useMemo(() => {
+  const subtotalPrice = useMemo(() => {
     if (!hasPrice) return null;
     return unitPricePerCreditInr * quantity;
   }, [hasPrice, quantity, unitPricePerCreditInr]);
 
+  const gstAmount = useMemo(() => {
+    if (subtotalPrice === null) return null;
+    if (!Number.isFinite(gstRatePercent) || gstRatePercent < 0) return null;
+    return (subtotalPrice * gstRatePercent) / 100;
+  }, [gstRatePercent, subtotalPrice]);
+
+  const totalPrice = useMemo(() => {
+    if (subtotalPrice === null) return null;
+    if (gstAmount === null) return null;
+    return subtotalPrice + gstAmount;
+  }, [gstAmount, subtotalPrice]);
+
   const hasMissingPricingInputs = !hasPrice || !hasAvailableCredits;
   const isPurchaseBlocked = !isVerifiedCompany || !hasCertificateCompanyName || hasMissingPricingInputs;
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    if (window.Razorpay) {
+      setIsRazorpayScriptReady(true);
+      return;
+    }
+
+    const existing = document.querySelector(
+      'script[data-zerocarbon-razorpay="checkout"]',
+    ) as HTMLScriptElement | null;
+    if (existing) {
+      if (existing.dataset.loaded === "true") {
+        setIsRazorpayScriptReady(true);
+      } else {
+        existing.addEventListener("load", () => setIsRazorpayScriptReady(true), {
+          once: true,
+        });
+      }
+      return;
+    }
+
+    const script = document.createElement("script");
+    script.src = "https://checkout.razorpay.com/v1/checkout.js";
+    script.async = true;
+    script.dataset.zerocarbonRazorpay = "checkout";
+    script.addEventListener("load", () => {
+      script.dataset.loaded = "true";
+      setIsRazorpayScriptReady(true);
+    });
+    script.addEventListener("error", () => {
+      setIsRazorpayScriptReady(false);
+      toast.error("Failed to load Razorpay checkout script.");
+    });
+    document.body.appendChild(script);
+  }, []);
 
   const handleAddQuantity = () => {
     setQuantity((previous) => Math.min(previous + 1, maxQuantity));
@@ -90,9 +180,136 @@ export default function ProjectPaymentDetailsClient({
     setQuantity((previous) => Math.max(previous - 1, 1));
   };
 
-  const handleProceed = () => {
-    if (isPurchaseBlocked) return;
-    toast.info("Payment gateway integration is coming soon.");
+  const handleProceed = async () => {
+    if (isPurchaseBlocked || isCheckoutLoading) return;
+    if (!isRazorpayScriptReady || !window.Razorpay) {
+      toast.error("Payment script is still loading. Please retry.");
+      return;
+    }
+
+    setIsCheckoutLoading(true);
+    try {
+      const response = await fetch("/api/payments/orders", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          projectId,
+          quantity,
+        }),
+      });
+
+      const payload = (await response.json().catch(() => null)) as
+        | CreateOrderResponse
+        | { error?: string; purchaseRef?: string }
+        | null;
+
+      if (!response.ok) {
+        if (response.status === 409 && payload && typeof payload.purchaseRef === "string") {
+          const warningMessage =
+            "error" in payload && typeof payload.error === "string"
+              ? payload.error
+              : "Payment is pending verification.";
+          toast.warning(warningMessage);
+          router.push(`/dashboard/buyer/orders/${payload.purchaseRef}`);
+          return;
+        }
+        const errorMessage =
+          payload &&
+          typeof payload === "object" &&
+          "error" in payload &&
+          typeof payload.error === "string"
+            ? payload.error
+            : `Failed to initialize payment (${response.status})`;
+        throw new Error(errorMessage);
+      }
+
+      if (!payload || !("checkout" in payload) || !payload.checkout) {
+        throw new Error("Checkout payload is unavailable.");
+      }
+
+      if (payload.message) {
+        toast.info(payload.message);
+      }
+
+      const purchaseRef = payload.purchaseRef;
+      const checkout = payload.checkout;
+
+      const options: Record<string, unknown> = {
+        key: checkout.keyId,
+        amount: checkout.amountPaise,
+        currency: checkout.currency,
+        order_id: checkout.razorpayOrderId,
+        name: checkout.name,
+        description: checkout.description,
+        notes: checkout.notes,
+        theme: {
+          color: "#16a34a",
+        },
+        modal: {
+          ondismiss: () => {
+            toast.warning("Checkout closed. You can retry using the same active order.");
+          },
+        },
+        handler: async (checkoutResult: {
+          razorpay_payment_id?: string;
+          razorpay_order_id?: string;
+          razorpay_signature?: string;
+        }) => {
+          try {
+            const verifyResponse = await fetch("/api/payments/checkout/verify", {
+              method: "POST",
+              headers: {
+                "Content-Type": "application/json",
+              },
+              body: JSON.stringify({
+                purchaseRef,
+                razorpayOrderId: checkoutResult.razorpay_order_id,
+                razorpayPaymentId: checkoutResult.razorpay_payment_id,
+                razorpaySignature: checkoutResult.razorpay_signature,
+              }),
+            });
+
+            const verifyPayload = (await verifyResponse.json().catch(() => null)) as
+              | { redirectUrl?: string; error?: string }
+              | null;
+
+            if (!verifyResponse.ok) {
+              const errorMessage =
+                verifyPayload &&
+                typeof verifyPayload === "object" &&
+                "error" in verifyPayload &&
+                typeof verifyPayload.error === "string"
+                  ? verifyPayload.error
+                  : `Checkout verification failed (${verifyResponse.status}).`;
+              throw new Error(errorMessage);
+            }
+
+            const redirectUrl =
+              verifyPayload?.redirectUrl || `/dashboard/buyer/orders/${purchaseRef}`;
+            toast.success("Payment authorized. Waiting for final confirmation.");
+            router.push(redirectUrl);
+          } catch (error) {
+            toast.error(
+              error instanceof Error
+                ? error.message
+                : "Checkout verification failed.",
+            );
+            router.push(`/dashboard/buyer/orders/${purchaseRef}`);
+          }
+        },
+      };
+
+      const checkoutInstance = new window.Razorpay(options);
+      checkoutInstance.open();
+    } catch (error) {
+      toast.error(
+        error instanceof Error ? error.message : "Unexpected payment initialization error.",
+      );
+    } finally {
+      setIsCheckoutLoading(false);
+    }
   };
 
   return (
@@ -175,6 +392,18 @@ export default function ProjectPaymentDetailsClient({
                   {quantity.toLocaleString("en-IN")}
                 </span>
               </div>
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-slate-600">Subtotal</span>
+                <span className="font-semibold text-slate-900">
+                  {subtotalPrice === null ? "Pending" : formatCurrency(subtotalPrice)}
+                </span>
+              </div>
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-slate-600">GST ({gstRatePercent}%)</span>
+                <span className="font-semibold text-slate-900">
+                  {gstAmount === null ? "Pending" : formatCurrency(gstAmount)}
+                </span>
+              </div>
               <div className="flex items-center justify-between gap-3 border-t border-slate-200 pt-2">
                 <span className="font-semibold text-slate-700">Total</span>
                 <span className="text-lg font-bold text-slate-900">
@@ -221,10 +450,10 @@ export default function ProjectPaymentDetailsClient({
             <button
               type="button"
               onClick={handleProceed}
-              disabled={isPurchaseBlocked}
+              disabled={isPurchaseBlocked || isCheckoutLoading}
               className="mt-5 w-full rounded-xl bg-green-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-green-700 disabled:cursor-not-allowed disabled:opacity-60"
             >
-              Proceed
+              {isCheckoutLoading ? "Opening Checkout..." : "Proceed"}
             </button>
           </article>
         </div>
