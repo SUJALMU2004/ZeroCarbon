@@ -1,5 +1,7 @@
 # AI_AGENT_SYSTEM_MEMORY
 
+> **Archived historical snapshot:** This document describes an older working-tree baseline and is not maintained. Use the current README and the maintained documents in `docs/` for implementation and operational guidance.
+
 ## Document Scope, Baseline, and Evidence Rules
 
 This document is a forensic system memory for the ZeroCarbon codebase in `c:\Users\SUJAL M\Desktop\zerocarbon`.
