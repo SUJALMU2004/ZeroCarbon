@@ -54,6 +54,27 @@ function renderHtmlPage(title: string, body: string, isError = false) {
   );
 }
 
+function renderApproveForm(params: { token: string; projectName: string }) {
+  return renderHtmlPage(
+    "Grant Edit Permission",
+    `
+      <p style="margin:0 0 12px;color:#334155;font-size:14px;">Confirm granting one-time edit access for this project.</p>
+      <div style="border:1px solid #e2e8f0;background:#f8fafc;border-radius:12px;padding:12px;margin-bottom:14px;">
+        <p style="margin:0;font-size:13px;"><strong>Project:</strong> ${escapeHtml(params.projectName)}</p>
+      </div>
+      <form method="post" action="/api/projects/grant-edit" style="display:grid;gap:12px;">
+        <input type="hidden" name="token" value="${escapeHtml(params.token)}" />
+        <button type="submit" style="border:0;border-radius:10px;background:#16a34a;color:#ffffff;font-weight:700;padding:10px 14px;cursor:pointer;">Confirm Grant Access</button>
+      </form>
+    `,
+  );
+}
+
+function isTokenExpired(expiresAt: string | null): boolean {
+  const expiry = expiresAt ? new Date(expiresAt).getTime() : Number.NaN;
+  return Number.isNaN(expiry) || expiry < Date.now();
+}
+
 async function sendSellerEmail(params: {
   to: string;
   projectName: string;
@@ -130,11 +151,60 @@ export async function GET(request: Request) {
     );
   }
 
-  const expiry = project.edit_token_expires_at
-    ? new Date(project.edit_token_expires_at).getTime()
-    : Number.NaN;
+  if (isTokenExpired(project.edit_token_expires_at)) {
+    return renderHtmlPage(
+      "Invalid or expired link",
+      "<p>This link is invalid or has expired.</p>",
+      true,
+    );
+  }
 
-  if (Number.isNaN(expiry) || expiry < Date.now()) {
+  return renderApproveForm({
+    token,
+    projectName: project.project_name ?? "Untitled Project",
+  });
+}
+
+export async function POST(request: Request) {
+  const formData = await request.formData();
+  const token = String(formData.get("token") ?? "").trim();
+
+  if (!token) {
+    return renderHtmlPage(
+      "Invalid approval link",
+      "<p>Missing token. Please use a valid email link.</p>",
+      true,
+    );
+  }
+
+  const serviceClient = createServiceSupabaseClient();
+  const { data: projectData, error: projectError } = await serviceClient
+    .from("carbon_projects")
+    .select("id, user_id, project_name, edit_token, edit_token_expires_at")
+    .eq("edit_token", token)
+    .maybeSingle();
+
+  if (projectError) {
+    console.error("grant_edit_project_query_failed", {
+      reason: projectError.message,
+    });
+    return renderHtmlPage(
+      "Approval failed",
+      "<p>Unable to validate this token right now. Please retry.</p>",
+      true,
+    );
+  }
+
+  const project = (projectData ?? null) as ProjectRow | null;
+  if (!project) {
+    return renderHtmlPage(
+      "Invalid or expired link",
+      "<p>This link is invalid or has already been used.</p>",
+      true,
+    );
+  }
+
+  if (isTokenExpired(project.edit_token_expires_at)) {
     return renderHtmlPage(
       "Invalid or expired link",
       "<p>This link is invalid or has expired.</p>",
@@ -195,6 +265,3 @@ export async function GET(request: Request) {
     "<p>Edit permission has been granted. The seller has been notified by email.</p>",
   );
 }
-
-
-

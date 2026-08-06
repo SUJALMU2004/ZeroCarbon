@@ -635,7 +635,7 @@ function buildSolarFingerprint(params: {
   polygonSignature: string | null;
 }): string {
   return JSON.stringify({
-    v: 2,
+    v: 3,
     modelType: "solar",
     status: params.status ?? "unknown",
     projectType: params.projectType ?? "unknown",
@@ -1924,11 +1924,9 @@ async function resolveWindmillValuation(params: {
       };
 
       if (renewablesNinjaData.errorMessage) {
-        console.error("project_ai_valuation_refresh_partial_source", {
-          projectId: params.input.projectId,
-          stage: "windmill_renewables_ninja",
-          reason: renewablesNinjaData.errorMessage,
-        });
+        console.warn(
+          `project_ai_valuation_partial_source projectId=${params.input.projectId} stage=windmill_renewables_ninja reason=${renewablesNinjaData.errorMessage}`,
+        );
       }
 
       nextSnapshot = createSnapshot({

@@ -128,11 +128,9 @@ export async function POST(request: Request) {
         payload: parsed,
       });
 
-    if (eventInsertError?.code === "23505") {
-      return NextResponse.json({ ok: true, duplicate: true }, { status: 200 });
-    }
+    const isDuplicateEvent = eventInsertError?.code === "23505";
 
-    if (eventInsertError) {
+    if (eventInsertError && !isDuplicateEvent) {
       console.error("payment_webhook_event_insert_failed", {
         stage: "event_insert",
         reason: eventInsertError.message,
@@ -143,7 +141,7 @@ export async function POST(request: Request) {
 
     if (!order) {
       return NextResponse.json(
-        { ok: true, processed: false, reason: "order_not_found" },
+        { ok: true, duplicate: isDuplicateEvent, processed: false, reason: "order_not_found" },
         { status: 200 },
       );
     }
@@ -156,10 +154,22 @@ export async function POST(request: Request) {
     if (eventType === "payment.captured" || eventType === "order.paid") {
       if (order.status !== "captured") {
         if (order.reservation_status === "active") {
-          await service.rpc("zc_finalize_project_sale", {
+          const { error: finalizeError } = await service.rpc("zc_finalize_project_sale", {
             p_project_id: order.project_id,
             p_quantity: order.quantity,
           });
+
+          if (finalizeError) {
+            console.error("payment_webhook_finalize_credits_failed", {
+              orderId: order.id,
+              eventType,
+              reason: finalizeError.message,
+            });
+            return NextResponse.json(
+              { error: "Failed to finalize project credits." },
+              { status: 500 },
+            );
+          }
         }
 
         const { error: updateError } = await service
@@ -191,10 +201,22 @@ export async function POST(request: Request) {
     } else if (eventType === "payment.failed") {
       if (order.status !== "captured" && order.status !== "failed") {
         if (order.reservation_status === "active") {
-          await service.rpc("zc_release_project_credits", {
+          const { error: releaseError } = await service.rpc("zc_release_project_credits", {
             p_project_id: order.project_id,
             p_quantity: order.quantity,
           });
+
+          if (releaseError) {
+            console.error("payment_webhook_release_credits_failed", {
+              orderId: order.id,
+              eventType,
+              reason: releaseError.message,
+            });
+            return NextResponse.json(
+              { error: "Failed to release reserved project credits." },
+              { status: 500 },
+            );
+          }
         }
 
         const { error: updateError } = await service
@@ -229,12 +251,24 @@ export async function POST(request: Request) {
       order.reservation_expires_at &&
       new Date(order.reservation_expires_at).getTime() <= Date.now()
     ) {
-      await service.rpc("zc_release_project_credits", {
+      const { error: releaseError } = await service.rpc("zc_release_project_credits", {
         p_project_id: order.project_id,
         p_quantity: order.quantity,
       });
 
-      await service
+      if (releaseError) {
+        console.error("payment_webhook_expiry_release_failed", {
+          orderId: order.id,
+          eventType,
+          reason: releaseError.message,
+        });
+        return NextResponse.json(
+          { error: "Failed to release expired reservation credits." },
+          { status: 500 },
+        );
+      }
+
+      const { error: expireUpdateError } = await service
         .from("project_credit_orders")
         .update({
           status: "expired",
@@ -249,11 +283,24 @@ export async function POST(request: Request) {
         .eq("id", order.id)
         .eq("reservation_status", "active")
         .in("status", ["created_reserved", "checkout_opened", "authorized_pending_webhook"]);
+
+      if (expireUpdateError) {
+        console.error("payment_webhook_expiry_update_failed", {
+          orderId: order.id,
+          eventType,
+          reason: expireUpdateError.message,
+        });
+        return NextResponse.json(
+          { error: "Failed to mark order as expired." },
+          { status: 500 },
+        );
+      }
     }
 
     return NextResponse.json(
       {
         ok: true,
+        duplicate: isDuplicateEvent,
         processed: true,
         eventType,
         purchaseRef: order.purchase_ref,

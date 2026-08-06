@@ -99,6 +99,30 @@ function renderRejectForm(params: {
   );
 }
 
+function renderApproveForm(params: {
+  token: string;
+  companyName: string;
+  companyEmail: string;
+  companyCountry: string;
+}) {
+  return renderAdminHtmlPage(
+    "Approve Company Registration",
+    `
+      <p style="margin:0 0 12px;color:#334155;font-size:14px;">Confirm approval for this company registration.</p>
+      <div style="border:1px solid #e2e8f0;background:#f8fafc;border-radius:12px;padding:12px;margin-bottom:14px;">
+        <p style="margin:0 0 6px;font-size:13px;"><strong>Company:</strong> ${escapeHtml(params.companyName)}</p>
+        <p style="margin:0 0 6px;font-size:13px;"><strong>Business Email:</strong> ${escapeHtml(params.companyEmail)}</p>
+        <p style="margin:0;font-size:13px;"><strong>Country:</strong> ${escapeHtml(params.companyCountry)}</p>
+      </div>
+      <form method="post" action="/api/admin/company-review" style="display:grid;gap:12px;">
+        <input type="hidden" name="token" value="${escapeHtml(params.token)}" />
+        <input type="hidden" name="action" value="approve" />
+        <button type="submit" style="border:0;border-radius:10px;background:#16a34a;color:#ffffff;font-weight:700;padding:10px 14px;cursor:pointer;">Confirm Approval</button>
+      </form>
+    `,
+  );
+}
+
 async function lookupCompanyByToken(token: string): Promise<CompanyRow | null> {
   const serviceClient = createServiceSupabaseClient();
   const { data, error } = await serviceClient
@@ -219,6 +243,33 @@ async function rejectCompany(company: CompanyRow, rejectionReason: string) {
   }
 }
 
+async function approveCompanyAndNotifyUser(company: CompanyRow) {
+  await approveCompany(company);
+
+  const profileEmail = await getProfileEmail(company.user_id);
+  const baseUrl = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
+  if (profileEmail) {
+    try {
+      await sendUserEmail({
+        to: profileEmail,
+        subject: "Your Company Has Been Verified - ZeroCarbon",
+        html: `
+<div style="font-family:Arial,sans-serif;color:#0f172a;line-height:1.5">
+  <h2 style="margin:0 0 10px;color:#16a34a">Congratulations!</h2>
+  <p style="margin:0 0 8px;">Your company <strong>${escapeHtml(company.legal_company_name ?? "your company")}</strong> has been verified on ZeroCarbon.</p>
+  <p style="margin:0 0 14px;">You can now access full marketplace features, calculate emissions, and purchase carbon credits.</p>
+  <a href="${baseUrl}/dashboard/buyer" style="background:#16a34a;color:#ffffff;text-decoration:none;padding:10px 14px;border-radius:8px;font-weight:700;display:inline-block;">Go to Dashboard</a>
+</div>`,
+      });
+    } catch (emailError) {
+      console.error("admin_company_review_approval_email_failed", {
+        userId: company.user_id,
+        reason: emailError instanceof Error ? emailError.message : "unknown_error",
+      });
+    }
+  }
+}
+
 export async function GET(request: NextRequest) {
   const url = new URL(request.url);
   const action = url.searchParams.get("action")?.trim();
@@ -257,47 +308,12 @@ export async function GET(request: NextRequest) {
       );
     }
 
-    try {
-      await approveCompany(company);
-
-      const profileEmail = await getProfileEmail(company.user_id);
-      const baseUrl = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
-      if (profileEmail) {
-        try {
-          await sendUserEmail({
-            to: profileEmail,
-            subject: "Your Company Has Been Verified - ZeroCarbon",
-            html: `
-<div style="font-family:Arial,sans-serif;color:#0f172a;line-height:1.5">
-  <h2 style="margin:0 0 10px;color:#16a34a">Congratulations!</h2>
-  <p style="margin:0 0 8px;">Your company <strong>${escapeHtml(company.legal_company_name ?? "your company")}</strong> has been verified on ZeroCarbon.</p>
-  <p style="margin:0 0 14px;">You can now access full marketplace features, calculate emissions, and purchase carbon credits.</p>
-  <a href="${baseUrl}/dashboard/buyer" style="background:#16a34a;color:#ffffff;text-decoration:none;padding:10px 14px;border-radius:8px;font-weight:700;display:inline-block;">Go to Dashboard</a>
-</div>`,
-          });
-        } catch (emailError) {
-          console.error("admin_company_review_approval_email_failed", {
-            userId: company.user_id,
-            reason: emailError instanceof Error ? emailError.message : "unknown_error",
-          });
-        }
-      }
-
-      return renderAdminHtmlPage(
-        "Company Approved",
-        `<p>You have approved <strong>${escapeHtml(company.legal_company_name ?? "this company")}</strong>.</p><p>A confirmation email has been sent to the company.</p>`,
-      );
-    } catch (error) {
-      console.error("admin_company_review_approve_failed", {
-        companyId: company.id,
-        reason: error instanceof Error ? error.message : "unknown_error",
-      });
-      return renderAdminHtmlPage(
-        "Approval Failed",
-        "<p>Unable to approve this company right now. Please retry.</p>",
-        true,
-      );
-    }
+    return renderApproveForm({
+      token,
+      companyName: company.legal_company_name ?? "Unknown company",
+      companyEmail: company.business_email ?? "Not provided",
+      companyCountry: company.country ?? "Not provided",
+    });
   }
 
   if (company.status === "rejected") {
@@ -322,8 +338,8 @@ export async function POST(request: NextRequest) {
   const token = String(formData.get("token") ?? "").trim();
   const rawReason = String(formData.get("reason") ?? "");
 
-  if (action !== "reject" || !token) {
-    return renderAdminHtmlPage("Invalid submission", "<p>Invalid reject form payload.</p>", true);
+  if ((action !== "approve" && action !== "reject") || !token) {
+    return renderAdminHtmlPage("Invalid submission", "<p>Invalid form payload.</p>", true);
   }
 
   const company = await lookupCompanyByToken(token);
@@ -349,6 +365,26 @@ export async function POST(request: NextRequest) {
       "<p>This company has already been approved.</p>",
       true,
     );
+  }
+
+  if (action === "approve") {
+    try {
+      await approveCompanyAndNotifyUser(company);
+      return renderAdminHtmlPage(
+        "Company Approved",
+        `<p>You have approved <strong>${escapeHtml(company.legal_company_name ?? "this company")}</strong>.</p><p>A confirmation email has been sent to the company.</p>`,
+      );
+    } catch (error) {
+      console.error("admin_company_review_approve_failed", {
+        companyId: company.id,
+        reason: error instanceof Error ? error.message : "unknown_error",
+      });
+      return renderAdminHtmlPage(
+        "Approval Failed",
+        "<p>Unable to approve this company right now. Please retry.</p>",
+        true,
+      );
+    }
   }
 
   const sanitizedReason = rawReason.replace(/<[^>]*>/g, "").trim();

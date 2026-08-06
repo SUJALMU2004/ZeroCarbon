@@ -107,6 +107,28 @@ function renderRejectForm(params: {
   );
 }
 
+function renderApproveForm(params: {
+  token: string;
+  projectName: string;
+  projectType: string;
+}) {
+  return renderAdminHtmlPage(
+    "Approve Project Submission",
+    `
+      <p style="margin:0 0 12px;color:#334155;font-size:14px;">Confirm approval for this project submission.</p>
+      <div style="border:1px solid #e2e8f0;background:#f8fafc;border-radius:12px;padding:12px;margin-bottom:14px;">
+        <p style="margin:0 0 6px;font-size:13px;"><strong>Project:</strong> ${escapeHtml(params.projectName)}</p>
+        <p style="margin:0;font-size:13px;"><strong>Type:</strong> ${escapeHtml(params.projectType)}</p>
+      </div>
+      <form method="post" action="/api/admin/project-review" style="display:grid;gap:12px;">
+        <input type="hidden" name="token" value="${escapeHtml(params.token)}" />
+        <input type="hidden" name="action" value="approve" />
+        <button type="submit" style="border:0;border-radius:10px;background:#16a34a;color:#ffffff;font-weight:700;padding:10px 14px;cursor:pointer;">Confirm Approval</button>
+      </form>
+    `,
+  );
+}
+
 async function lookupProjectByToken(token: string): Promise<ProjectRow | null> {
   const serviceClient = createServiceSupabaseClient();
   const { data, error } = await serviceClient
@@ -263,6 +285,75 @@ async function triggerSatelliteAnalysis(params: {
   }
 }
 
+async function approveProjectAndNotify(project: ProjectRow) {
+  const serviceClient = createServiceSupabaseClient();
+  const nowIso = new Date().toISOString();
+  const { error: approveError } = await serviceClient
+    .from("carbon_projects")
+    .update({
+      status: "verified",
+      reviewed_at: nowIso,
+      satellite_status: "processing",
+      admin_token: null,
+      admin_token_expires_at: null,
+    })
+    .eq("id", project.id);
+
+  if (approveError) {
+    throw new Error(approveError.message);
+  }
+
+  const profileEmail = await getProfileEmail(project.user_id);
+  if (profileEmail) {
+    const baseUrl = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
+    try {
+      await sendEmail({
+        to: profileEmail,
+        subject: "Your Project Has Been Verified - ZeroCarbon",
+        html: `
+<div style="font-family:Arial,sans-serif;color:#0f172a;line-height:1.5">
+  <h2 style="margin:0 0 10px;color:#16a34a">Project Approved</h2>
+  <p style="margin:0 0 8px;">Your project <strong>${escapeHtml(project.project_name ?? "your project")}</strong> has been approved by ZeroCarbon.</p>
+  <p style="margin:0 0 14px;">Satellite verification is now running in the background.</p>
+  <a href="${baseUrl}/dashboard/seller" style="background:#16a34a;color:#ffffff;text-decoration:none;padding:10px 14px;border-radius:8px;font-weight:700;display:inline-block;">Go to Dashboard</a>
+</div>`,
+      });
+    } catch (emailError) {
+      console.error("admin_project_review_approval_email_failed", {
+        projectId: project.id,
+        reason: emailError instanceof Error ? emailError.message : "unknown_error",
+      });
+    }
+  }
+
+  if (
+    project.project_type &&
+    project.latitude !== null &&
+    project.longitude !== null &&
+    project.land_area_hectares !== null
+  ) {
+    waitUntil(
+      triggerSatelliteAnalysis({
+        projectId: project.id,
+        projectType: project.project_type,
+        latitude: Number(project.latitude),
+        longitude: Number(project.longitude),
+        landAreaHectares: Number(project.land_area_hectares),
+      }),
+    );
+  } else {
+    waitUntil(
+      triggerSatelliteAnalysis({
+        projectId: project.id,
+        projectType: "other",
+        latitude: Number(project.latitude ?? 0),
+        longitude: Number(project.longitude ?? 0),
+        landAreaHectares: Number(project.land_area_hectares ?? 1),
+      }),
+    );
+  }
+}
+
 export async function GET(request: NextRequest) {
   const url = new URL(request.url);
   const action = url.searchParams.get("action")?.trim();
@@ -301,85 +392,11 @@ export async function GET(request: NextRequest) {
   }
 
   if (action === "approve") {
-    const serviceClient = createServiceSupabaseClient();
-    const nowIso = new Date().toISOString();
-    const { error: approveError } = await serviceClient
-      .from("carbon_projects")
-      .update({
-        status: "verified",
-        reviewed_at: nowIso,
-        satellite_status: "processing",
-        admin_token: null,
-        admin_token_expires_at: null,
-      })
-      .eq("id", project.id);
-
-    if (approveError) {
-      console.error("admin_project_review_approve_failed", {
-        projectId: project.id,
-        reason: approveError.message,
-      });
-      return renderAdminHtmlPage(
-        "Approval Failed",
-        "<p>Unable to approve this project right now. Please retry.</p>",
-        true,
-      );
-    }
-
-    const profileEmail = await getProfileEmail(project.user_id);
-    if (profileEmail) {
-      const baseUrl = process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000";
-      try {
-        await sendEmail({
-          to: profileEmail,
-          subject: "Your Project Has Been Verified - ZeroCarbon",
-          html: `
-<div style="font-family:Arial,sans-serif;color:#0f172a;line-height:1.5">
-  <h2 style="margin:0 0 10px;color:#16a34a">Project Approved</h2>
-  <p style="margin:0 0 8px;">Your project <strong>${escapeHtml(project.project_name ?? "your project")}</strong> has been approved by ZeroCarbon.</p>
-  <p style="margin:0 0 14px;">Satellite verification is now running in the background.</p>
-  <a href="${baseUrl}/dashboard/seller" style="background:#16a34a;color:#ffffff;text-decoration:none;padding:10px 14px;border-radius:8px;font-weight:700;display:inline-block;">Go to Dashboard</a>
-</div>`,
-        });
-      } catch (emailError) {
-        console.error("admin_project_review_approval_email_failed", {
-          projectId: project.id,
-          reason: emailError instanceof Error ? emailError.message : "unknown_error",
-        });
-      }
-    }
-
-    if (
-      project.project_type &&
-      project.latitude !== null &&
-      project.longitude !== null &&
-      project.land_area_hectares !== null
-    ) {
-      waitUntil(
-        triggerSatelliteAnalysis({
-          projectId: project.id,
-          projectType: project.project_type,
-          latitude: Number(project.latitude),
-          longitude: Number(project.longitude),
-          landAreaHectares: Number(project.land_area_hectares),
-        }),
-      );
-    } else {
-      waitUntil(
-        triggerSatelliteAnalysis({
-          projectId: project.id,
-          projectType: "other",
-          latitude: Number(project.latitude ?? 0),
-          longitude: Number(project.longitude ?? 0),
-          landAreaHectares: Number(project.land_area_hectares ?? 1),
-        }),
-      );
-    }
-
-    return renderAdminHtmlPage(
-      "Project Approved",
-      `<p>You have approved <strong>${escapeHtml(project.project_name ?? "this project")}</strong>.</p><p>Satellite verification is now running in the background.</p>`,
-    );
+    return renderApproveForm({
+      token,
+      projectName: project.project_name ?? "Unknown project",
+      projectType: project.project_type ?? "Unknown",
+    });
   }
 
   if (project.status === "rejected") {
@@ -403,8 +420,8 @@ export async function POST(request: NextRequest) {
   const token = String(formData.get("token") ?? "").trim();
   const rawReason = String(formData.get("reason") ?? "");
 
-  if (action !== "reject" || !token) {
-    return renderAdminHtmlPage("Invalid submission", "<p>Invalid reject form payload.</p>", true);
+  if ((action !== "approve" && action !== "reject") || !token) {
+    return renderAdminHtmlPage("Invalid submission", "<p>Invalid form payload.</p>", true);
   }
 
   const project = await lookupProjectByToken(token);
@@ -430,6 +447,26 @@ export async function POST(request: NextRequest) {
       "<p>This project has already been approved.</p>",
       true,
     );
+  }
+
+  if (action === "approve") {
+    try {
+      await approveProjectAndNotify(project);
+      return renderAdminHtmlPage(
+        "Project Approved",
+        `<p>You have approved <strong>${escapeHtml(project.project_name ?? "this project")}</strong>.</p><p>Satellite verification is now running in the background.</p>`,
+      );
+    } catch (error) {
+      console.error("admin_project_review_approve_failed", {
+        projectId: project.id,
+        reason: error instanceof Error ? error.message : "unknown_error",
+      });
+      return renderAdminHtmlPage(
+        "Approval Failed",
+        "<p>Unable to approve this project right now. Please retry.</p>",
+        true,
+      );
+    }
   }
 
   const sanitizedReason = rawReason.replace(/<[^>]*>/g, "").trim();

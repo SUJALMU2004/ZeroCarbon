@@ -251,11 +251,30 @@ function buildGhiExpression(params: {
             geometry: params.geometry,
             scale: { constantValue: 11132 },
             maxPixels: { constantValue: 1_000_000_000 },
+            bestEffort: { constantValue: true },
           },
         },
       },
     },
   };
+}
+
+function buildGhiBandCandidates(band: string): string[] {
+  const trimmed = band.trim();
+  if (!trimmed) return [];
+
+  const withoutSum = trimmed.endsWith("_sum")
+    ? trimmed.slice(0, -"_sum".length)
+    : trimmed;
+
+  const candidates = [
+    `${trimmed}_sum`,
+    trimmed,
+    `${withoutSum}_sum`,
+    withoutSum,
+  ];
+
+  return Array.from(new Set(candidates.filter(Boolean)));
 }
 
 function extractNumericValue(input: unknown): number | null {
@@ -330,7 +349,7 @@ export async function runSolarIrradianceAnalysis(params: {
   const { startIso, endIso, windowDays } = getSolarDateWindow();
   const dataset = getSolarDataset();
   const band = getSolarBand();
-  const bandName = `${band}_sum`;
+  const bandCandidates = buildGhiBandCandidates(band);
 
   const token = await getGeeAccessToken();
 
@@ -358,15 +377,31 @@ export async function runSolarIrradianceAnalysis(params: {
     throw new Error("Solar GEE area failed: unable to derive polygon area.");
   }
 
-  const bandValue = extractNumericValue(
-    (ghiRaw.result as Record<string, unknown> | undefined)?.[bandName] ??
-      ghiRaw.result ??
-      ghiRaw.value ??
-      ghiRaw,
-  );
+  let bandValue: number | null = null;
+  const ghiResult =
+    ghiRaw.result && typeof ghiRaw.result === "object"
+      ? (ghiRaw.result as Record<string, unknown>)
+      : null;
+
+  if (ghiResult) {
+    for (const key of bandCandidates) {
+      const candidateValue = extractNumericValue(ghiResult[key]);
+      if (candidateValue !== null) {
+        bandValue = candidateValue;
+        break;
+      }
+    }
+  }
+
+  if (bandValue === null) {
+    bandValue = extractNumericValue(ghiRaw.result ?? ghiRaw.value ?? ghiRaw);
+  }
 
   if (bandValue === null || bandValue <= 0) {
-    throw new Error("Solar GEE ghi failed: unable to derive annual irradiance.");
+    const keys = ghiResult ? Object.keys(ghiResult) : [];
+    throw new Error(
+      `Solar GEE ghi failed: unable to derive annual irradiance. dataset=${dataset} band=${band} result_keys=${keys.join(",") || "none"}`,
+    );
   }
 
   const annualKwhPerM2 = (bandValue / 3_600_000) * (365 / windowDays);

@@ -27,6 +27,10 @@ function unauthorized() {
   return NextResponse.json({ error: "Unauthorized." }, { status: 401 });
 }
 
+function serviceUnavailable(error: string) {
+  return NextResponse.json({ error }, { status: 503 });
+}
+
 function badRequest(error: string) {
   return NextResponse.json({ error }, { status: 400 });
 }
@@ -71,8 +75,13 @@ function parsePayload(payload: AnalyzePayload): {
 }
 
 export async function POST(request: Request) {
-  const expectedSecret = process.env.INTERNAL_API_SECRET ?? "";
-  const providedSecret = request.headers.get("x-internal-secret") ?? "";
+  const expectedSecret = process.env.INTERNAL_API_SECRET?.trim() ?? "";
+  if (!expectedSecret) {
+    console.error("satellite_analyze_secret_missing");
+    return serviceUnavailable("Internal API secret is not configured.");
+  }
+
+  const providedSecret = request.headers.get("x-internal-secret")?.trim() ?? "";
   if (providedSecret !== expectedSecret) {
     return unauthorized();
   }

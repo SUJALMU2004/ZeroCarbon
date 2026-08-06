@@ -110,6 +110,11 @@ type InsertedProjectRow = {
   id: string;
 };
 
+type ProfileGateRow = {
+  phone_verified: boolean | null;
+  verification_status: string | null;
+};
+
 type ValidatedPayload = {
   project_name: string;
   project_type: (typeof PROJECT_TYPES)[number];
@@ -778,6 +783,31 @@ export async function POST(request: Request) {
     }
 
     const serviceClient = createServiceSupabaseClient();
+    const { data: profileGateData, error: profileGateError } = await serviceClient
+      .from("profiles")
+      .select("phone_verified, verification_status")
+      .eq("id", user.id)
+      .maybeSingle();
+
+    if (profileGateError) {
+      console.error("verify_project_profile_gate_lookup_failed", {
+        userId: user.id,
+        reason: profileGateError.message,
+      });
+      return errorResponse(500, "Unable to submit project. Please try again.");
+    }
+
+    const profileGate = (profileGateData ?? null) as ProfileGateRow | null;
+    const identityVerified =
+      profileGate?.phone_verified === true &&
+      profileGate?.verification_status === "verified";
+
+    if (!identityVerified) {
+      return errorResponse(
+        403,
+        "Phone and identity verification are required before submitting a project.",
+      );
+    }
 
     const { data: duplicateProject, error: duplicateError } = await serviceClient
       .from("carbon_projects")
